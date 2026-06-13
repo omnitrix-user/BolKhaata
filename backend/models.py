@@ -1,5 +1,4 @@
-from datetime import datetime
-from typing import Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -7,14 +6,32 @@ from pydantic import BaseModel
 class KhataEntry(BaseModel):
     customer_name: str
     amount: float
-    transaction_type: str  # e.g. "credit" or "debit"
-    description: Optional[str] = None
-    created_at: Optional[datetime] = None
+    type: Literal["credit", "payment"]
+    note: str = ""
+    date: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class TranscriptIn(BaseModel):
+    transcript: str
+
+
+class InvoiceItem(BaseModel):
+    name: str
+    qty: int = 1
+    rate: float = 0
+    gst: float = 5
 
 
 class Invoice(BaseModel):
-    transaction_id: Optional[int] = None
+    invoice_id: Optional[str] = None
     customer_name: str
+    items: List[InvoiceItem] = []
+    total: Optional[float] = None
+    date: Optional[str] = None
+
+
+class ReminderIn(BaseModel):
+    customer_name: str
+    phone: Optional[str] = None
     amount: float
-    pdf_path: Optional[str] = None
-    created_at: Optional[datetime] = None
