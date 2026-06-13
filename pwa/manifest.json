@@ -1,0 +1,22 @@
+{
+  "name": "बोलखाता — BolKhaata Vendor Ledger",
+  "short_name": "बोलखाता",
+  "description": "Voice-first vendor ledger (khata) for Indian micro-vendors. Track udhaar, payments, and balances offline.",
+  "lang": "hi-IN",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#4A151C",
+  "theme_color": "#4A151C",
+  "categories": ["finance", "business", "productivity"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

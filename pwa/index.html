@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="hi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+    <title>बोलखाता • BolKhaata — Vendor Ledger</title>
+    <meta name="description" content="BolKhaata — voice-first vendor ledger (khata) for Indian micro-vendors." />
+
+    <!-- PWA / standalone -->
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#4A151C" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icon.svg" />
+
+    <!-- iOS standalone -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="बोलखाता" />
+
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- App canvas: locked to 480px, centered on desktop -->
+    <div class="app" id="app">
+      <!-- Component A — Top Navigation Bar -->
+      <header class="navbar" role="banner">
+        <button class="icon-btn" id="menuBtn" aria-label="मेन्यू खोलें / Open menu">
+          <!-- hamburger -->
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="24" height="24">
+            <path fill="currentColor" d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z" />
+          </svg>
+        </button>
+
+        <h1 class="brand" aria-label="बोलखाता मेरा खाता">बोलखाता <span class="brand-dot">•</span> मेरा खाता</h1>
+
+        <button class="avatar-badge" id="profileBtn" aria-label="वेंडर प्रोफ़ाइल / Vendor profile">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="24" height="24">
+            <path fill="currentColor" d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5Z" />
+          </svg>
+        </button>
+      </header>
+
+      <!-- Scrollable content region (between fixed navbar and tab bar) -->
+      <main class="content" id="content" role="main">
+        <!-- Views are rendered here by app.js -->
+      </main>
+
+      <!-- Component D — Voice shortcut + primary FAB -->
+      <button class="fab fab--voice" id="voiceFab" aria-label="आवाज़ से लेन-देन / Add by voice">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="24" height="24">
+          <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.71V21h2v-3.29A7 7 0 0 0 19 11h-2Z" />
+        </svg>
+      </button>
+
+      <button class="fab fab--add" id="addFab" aria-label="नया लेन-देन जोड़ें / New transaction">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22">
+          <path fill="currentColor" d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2h6Z" />
+        </svg>
+        <span class="fab-label">नया लेन-देन</span>
+      </button>
+
+      <!-- Component E — Bottom Navigation Tab Bar -->
+      <nav class="tabbar" id="tabbar" role="navigation" aria-label="मुख्य नेविगेशन">
+        <button class="tab tab--active" data-view="home" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22"><path fill="currentColor" d="M12 3 2 12h3v8h6v-5h2v5h6v-8h3L12 3Z"/></svg>
+          <span>होम</span>
+        </button>
+        <button class="tab" data-view="customers">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22"><path fill="currentColor" d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm-8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm0 2c-2.7 0-6 1.3-6 4v2h8v-2c0-1 .4-1.9 1-2.6A9 9 0 0 0 8 13Zm8 0c-.4 0-.9 0-1.3.1A4.6 4.6 0 0 1 17 17v2h7v-2c0-2.7-3.3-4-8-4Z"/></svg>
+          <span>ग्राहक</span>
+        </button>
+        <button class="tab" data-view="transactions">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3 4v2h10V8Zm0 4v2h10v-2Zm0 4v2h7v-2Z"/></svg>
+          <span>लेन-देन</span>
+        </button>
+        <button class="tab" data-view="reports">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22"><path fill="currentColor" d="M4 20V10h4v10H4Zm6 0V4h4v16h-4Zm6 0v-7h4v7h-4Z"/></svg>
+          <span>रिपोर्ट</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- Add / edit transaction sheet (hidden by default) -->
+    <div class="sheet-backdrop" id="sheetBackdrop" hidden>
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+        <div class="sheet-grab" aria-hidden="true"></div>
+        <h2 class="sheet-title" id="sheetTitle">नया लेन-देन <span class="muted">/ New entry</span></h2>
+
+        <label class="field">
+          <span class="field-label">ग्राहक का नाम <span class="muted">/ Customer</span></span>
+          <input class="field-input" id="fName" type="text" autocomplete="off" placeholder="रमेश अग्रवाल" />
+        </label>
+
+        <label class="field">
+          <span class="field-label">रकम (₹) <span class="muted">/ Amount</span></span>
+          <input class="field-input" id="fAmount" type="number" inputmode="decimal" min="0" step="1" placeholder="500" />
+        </label>
+
+        <div class="field">
+          <span class="field-label">प्रकार <span class="muted">/ Type</span></span>
+          <div class="type-toggle" role="radiogroup" aria-label="लेन-देन का प्रकार">
+            <button type="button" class="type-opt type-opt--credit type-opt--on" id="optCredit" role="radio" aria-checked="true">
+              आने हैं <small>उधार दिया</small>
+            </button>
+            <button type="button" class="type-opt type-opt--debit" id="optDebit" role="radio" aria-checked="false">
+              देने हैं <small>भुगतान मिला</small>
+            </button>
+          </div>
+        </div>
+
+        <p class="voice-hint" id="voiceHint" hidden></p>
+
+        <div class="sheet-actions">
+          <button class="btn btn--ghost" id="sheetCancel" type="button">रद्द करें</button>
+          <button class="btn btn--primary" id="sheetSave" type="button">सेव करें</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live region for voice / status announcements -->
+    <div class="sr-only" aria-live="polite" id="liveRegion"></div>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
