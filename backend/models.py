@@ -38,12 +38,18 @@ class ShopUpdate(BaseModel):
 # Khata
 # --------------------------------------------------------------------------- #
 class KhataEntry(BaseModel):
-    customer_name: str
+    customer_id: Optional[int] = None
+    customer_name: str = ""
     amount: float
     type: Literal["credit", "payment"]
     note: str = ""
     date: Optional[str] = None
     phone: Optional[str] = None
+
+
+class CustomerCreate(BaseModel):
+    name: str
+    phone: str = ""
 
 
 class TranscriptIn(BaseModel):
@@ -66,6 +72,7 @@ class InvoiceItem(BaseModel):
 
 class Invoice(BaseModel):
     invoice_id: Optional[str] = None
+    customer_id: Optional[int] = None
     customer_name: str
     items: List[InvoiceItem] = []
     total: Optional[float] = None

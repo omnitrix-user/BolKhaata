@@ -18,6 +18,7 @@ from intent_parser import parse_intent
 from invoice_generator import generate_invoice_pdf
 from invoice_image import generate_invoice_image
 from models import (
+    CustomerCreate,
     CustomerPhoneIn,
     Invoice,
     KhataEntry,
@@ -125,40 +126,80 @@ def parse_intent_endpoint(payload: TranscriptIn, shop=Depends(auth.require_shop)
 
 
 # --------------------------------------------------------------------------- #
-# Khata / ledger
+# Customers / khata / ledger  (id-based; duplicate names supported)
 # --------------------------------------------------------------------------- #
-@app.post("/log-transaction")
-def log_transaction(entry: KhataEntry, shop=Depends(auth.require_shop)):
-    if not entry.customer_name.strip():
-        raise HTTPException(status_code=400, detail="Customer name required.")
-    if not entry.date:
-        entry.date = datetime.now().strftime("%d %b")
-    balance = database.add_transaction(shop["id"], entry)
-    return {"success": True, "balance": balance}
-
-
 @app.get("/ledger")
 def ledger(shop=Depends(auth.require_shop)):
     return {"customers": database.list_customers(shop["id"])}
 
 
-@app.get("/ledger/{name}")
-def ledger_for(name: str, shop=Depends(auth.require_shop)):
-    txns, balance, phone = database.customer_history(shop["id"], name)
-    return {"transactions": txns, "balance": balance, "phone": phone}
+@app.get("/customer/{customer_id}")
+def customer_detail(customer_id: int, shop=Depends(auth.require_shop)):
+    data = database.customer_history(shop["id"], customer_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return data
+
+
+@app.post("/customers/resolve")
+def resolve_customer(payload: CustomerCreate, shop=Depends(auth.require_shop)):
+    """Return all customers matching a name (for voice/typed disambiguation)."""
+    return {"matches": database.resolve_customers(shop["id"], payload.name)}
+
+
+@app.post("/customers")
+def create_customer(payload: CustomerCreate, shop=Depends(auth.require_shop)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Name required.")
+    return {"success": True, "customer": database.create_customer(
+        shop["id"], payload.name.strip(), payload.phone.strip())}
+
+
+@app.post("/customer/{customer_id}/phone")
+def set_phone(customer_id: int, payload: CustomerPhoneIn, shop=Depends(auth.require_shop)):
+    database.set_customer_phone(shop["id"], customer_id, payload.phone.strip())
+    return {"success": True}
+
+
+def _resolve_customer(shop_id, customer_id, customer_name, phone, allow_create=True):
+    """Resolve to a single customer or raise 409 with candidates when ambiguous."""
+    if customer_id:
+        c = database.get_customer(shop_id, customer_id)
+        if not c:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        if phone:
+            database.set_customer_phone(shop_id, customer_id, phone)
+        return customer_id, c["name"]
+    name = (customer_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Customer name required.")
+    matches = database.resolve_customers(shop_id, name)
+    if len(matches) == 1:
+        cid = matches[0]["id"]
+        if phone:
+            database.set_customer_phone(shop_id, cid, phone)
+        return cid, matches[0]["name"]
+    if not matches:
+        if not allow_create:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        c = database.create_customer(shop_id, name, phone or "")
+        return c["id"], c["name"]
+    raise HTTPException(status_code=409, detail={"error": "ambiguous", "candidates": matches})
+
+
+@app.post("/log-transaction")
+def log_transaction(entry: KhataEntry, shop=Depends(auth.require_shop)):
+    cid, name = _resolve_customer(shop["id"], entry.customer_id, entry.customer_name, entry.phone)
+    date = entry.date or datetime.now().strftime("%d %b")
+    balance = database.add_transaction(
+        shop["id"], cid, name, entry.amount, entry.type, entry.note or "", date)
+    return {"success": True, "balance": balance, "customer_id": cid, "customer_name": name}
 
 
 @app.delete("/transaction/{txn_id}")
 def delete_txn(txn_id: int, shop=Depends(auth.require_shop)):
-    ok = database.delete_transaction(shop["id"], txn_id)
-    if not ok:
+    if not database.delete_transaction(shop["id"], txn_id):
         raise HTTPException(status_code=404, detail="Not found")
-    return {"success": True}
-
-
-@app.post("/customer/{name}/phone")
-def set_phone(name: str, payload: CustomerPhoneIn, shop=Depends(auth.require_shop)):
-    database.set_customer_phone(shop["id"], name, payload.phone.strip())
     return {"success": True}
 
 
@@ -178,6 +219,18 @@ def _shop_info(shop):
     }
 
 
+def _link_invoice_customer(shop_id, customer_id, name):
+    """Best-effort link an invoice to a customer (never blocks generation)."""
+    if customer_id and database.get_customer(shop_id, customer_id):
+        return customer_id
+    matches = database.resolve_customers(shop_id, name) if name else []
+    if len(matches) == 1:
+        return matches[0]["id"]
+    if not matches and (name or "").strip():
+        return database.create_customer(shop_id, name.strip())["id"]
+    return None  # ambiguous — store name only
+
+
 @app.post("/generate-invoice")
 def generate_invoice(invoice: Invoice, shop=Depends(auth.require_shop)):
     data = invoice.model_dump()
@@ -188,8 +241,9 @@ def generate_invoice(invoice: Invoice, shop=Depends(auth.require_shop)):
     if not data.get("date"):
         data["date"] = datetime.now().strftime("%d %b %Y")
     generate_invoice_image(data, info)  # writes <id>.jpg alongside the PDF
+    cid = _link_invoice_customer(shop["id"], data.get("customer_id"), data["customer_name"])
     database.save_invoice(
-        shop["id"], invoice_id, data["customer_name"],
+        shop["id"], cid, invoice_id, data["customer_name"],
         json.dumps(data.get("items", [])), total, data["date"], pdf_path,
     )
     return {
@@ -204,6 +258,17 @@ def generate_invoice(invoice: Invoice, shop=Depends(auth.require_shop)):
 @app.get("/invoices")
 def invoices(shop=Depends(auth.require_shop)):
     return {"invoices": database.list_invoices(shop["id"])}
+
+
+@app.delete("/invoice/{invoice_id}")
+def delete_invoice(invoice_id: str, shop=Depends(auth.require_shop)):
+    if not database.delete_invoice(shop["id"], invoice_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    for ext in ("pdf", "jpg"):
+        f = Path(__file__).parent / "invoices" / f"{invoice_id}.{ext}"
+        if f.exists():
+            f.unlink()
+    return {"success": True}
 
 
 def _auth_for_file(invoice_id, token, x_shop_token):
@@ -239,7 +304,11 @@ def get_invoice(invoice_id: str, token: str | None = None, x_shop_token: str | N
 # --------------------------------------------------------------------------- #
 @app.post("/send-reminder")
 def reminder(payload: ReminderIn, shop=Depends(auth.require_shop)):
-    phone = payload.phone or database.get_customer_phone(shop["id"], payload.customer_name)
+    phone = payload.phone
+    if not phone and payload.customer_name:
+        matches = database.resolve_customers(shop["id"], payload.customer_name)
+        if len(matches) == 1:
+            phone = matches[0]["phone"]
     message = whatsapp.reminder_message(shop["name"], payload.customer_name, payload.amount)
     sent = whatsapp.try_twilio_send(phone, message)
     return {

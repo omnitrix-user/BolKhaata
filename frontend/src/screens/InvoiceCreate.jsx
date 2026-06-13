@@ -50,8 +50,11 @@ export default function InvoiceCreate({ lang, prefill, nav }) {
     if (!clean.length) return toast(tr('addItem'), 'error')
     setBusy(true)
     try {
-      const r = await api.generateInvoice({ customer_name: customer.trim(), items: clean })
+      const r = await api.generateInvoice({
+        customer_id: prefill?.customer_id, customer_name: customer.trim(), items: clean,
+      })
       setCreated({ invoice_id: r.invoice_id, customer_name: customer.trim(), total: r.total, items: clean })
+      nav.refresh?.()
       toast(lang === 'hi' ? 'बिल बन गया ✅' : 'Invoice created ✅')
     } catch {
       toast(tr('somethingWrong'), 'error')

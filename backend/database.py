@@ -1,11 +1,12 @@
 """SQLite data layer for BolKhaata.
 
-Everything is scoped to a shop. A shop is identified internally by an integer
-``shop_id``; the frontend authenticates with an opaque ``token`` that maps to a
-shop. Customers are first-class (so we can remember a phone number for WhatsApp
-reminders), and transactions/invoices both carry ``shop_id``.
+Scoped to a shop (``shop_id``). Customers are first-class rows identified by an
+integer ``id`` — duplicate names are allowed (disambiguated by phone), and
+transactions reference ``customer_id``. ``customer_name`` is kept denormalised on
+transactions/invoices for display and backward compatibility.
 """
 
+import json
 import secrets
 import sqlite3
 from datetime import datetime
@@ -19,6 +20,10 @@ def get_connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def _columns(cur, table):
+    return {r[1] for r in cur.execute(f"PRAGMA table_info({table})")}
 
 
 def init_db() -> None:
@@ -44,17 +49,16 @@ def init_db() -> None:
         )
         """
     )
-
-    # Migrate older DBs that predate business_type/gst_rate/upi_id.
-    cols = {r[1] for r in cur.execute("PRAGMA table_info(shops)")}
+    shop_cols = _columns(cur, "shops")
     for col, ddl in (
         ("business_type", "ALTER TABLE shops ADD COLUMN business_type TEXT DEFAULT 'standard'"),
         ("gst_rate", "ALTER TABLE shops ADD COLUMN gst_rate REAL DEFAULT 5"),
         ("upi_id", "ALTER TABLE shops ADD COLUMN upi_id TEXT DEFAULT ''"),
     ):
-        if col not in cols:
+        if col not in shop_cols:
             cur.execute(ddl)
 
+    # Customers — id-based, duplicate names allowed (NO unique on name).
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS customers (
@@ -63,17 +67,40 @@ def init_db() -> None:
             name TEXT NOT NULL,
             phone TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(shop_id, name),
             FOREIGN KEY(shop_id) REFERENCES shops(id) ON DELETE CASCADE
         )
         """
     )
+    # Migrate an older customers table that still has UNIQUE(shop_id, name).
+    master = cur.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='customers'"
+    ).fetchone()
+    if master and "UNIQUE" in (master["sql"] or "").upper():
+        cur.execute("ALTER TABLE customers RENAME TO customers_old")
+        cur.execute(
+            """
+            CREATE TABLE customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shop_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                phone TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(shop_id) REFERENCES shops(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cur.execute(
+            "INSERT INTO customers (id, shop_id, name, phone, created_at) "
+            "SELECT id, shop_id, name, phone, created_at FROM customers_old"
+        )
+        cur.execute("DROP TABLE customers_old")
 
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             shop_id INTEGER NOT NULL,
+            customer_id INTEGER,
             customer_name TEXT NOT NULL,
             amount REAL NOT NULL,
             type TEXT NOT NULL,
@@ -84,12 +111,15 @@ def init_db() -> None:
         )
         """
     )
+    if "customer_id" not in _columns(cur, "transactions"):
+        cur.execute("ALTER TABLE transactions ADD COLUMN customer_id INTEGER")
 
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS invoices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             shop_id INTEGER NOT NULL,
+            customer_id INTEGER,
             invoice_id TEXT,
             customer_name TEXT NOT NULL,
             items_json TEXT DEFAULT '[]',
@@ -101,9 +131,45 @@ def init_db() -> None:
         )
         """
     )
+    if "customer_id" not in _columns(cur, "invoices"):
+        cur.execute("ALTER TABLE invoices ADD COLUMN customer_id INTEGER")
+
+    # Indexes for scale.
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_txn_shop_cust ON transactions(shop_id, customer_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_cust_shop_name ON customers(shop_id, name)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_inv_shop ON invoices(shop_id)")
 
     conn.commit()
+    _backfill_customer_ids(conn)
     conn.close()
+
+
+def _backfill_customer_ids(conn) -> None:
+    """Link legacy name-based transactions/invoices to customer rows."""
+    cur = conn.cursor()
+    rows = cur.execute(
+        "SELECT DISTINCT shop_id, customer_name FROM transactions WHERE customer_id IS NULL"
+    ).fetchall()
+    for r in rows:
+        sid, name = r["shop_id"], r["customer_name"]
+        existing = cur.execute(
+            "SELECT id FROM customers WHERE shop_id = ? AND name = ? ORDER BY id LIMIT 1",
+            (sid, name),
+        ).fetchone()
+        if existing:
+            cid = existing["id"]
+        else:
+            cur.execute("INSERT INTO customers (shop_id, name) VALUES (?, ?)", (sid, name))
+            cid = cur.lastrowid
+        cur.execute(
+            "UPDATE transactions SET customer_id = ? WHERE shop_id = ? AND customer_name = ? AND customer_id IS NULL",
+            (cid, sid, name),
+        )
+        cur.execute(
+            "UPDATE invoices SET customer_id = ? WHERE shop_id = ? AND customer_name = ? AND customer_id IS NULL",
+            (cid, sid, name),
+        )
+    conn.commit()
 
 
 # --------------------------------------------------------------------------- #
@@ -115,17 +181,10 @@ def _new_token() -> str:
 
 def _shop_public(row: sqlite3.Row) -> dict:
     return {
-        "id": row["id"],
-        "name": row["name"],
-        "owner_name": row["owner_name"],
-        "phone": row["phone"],
-        "gstin": row["gstin"],
-        "address": row["address"],
-        "mode": row["mode"],
-        "business_type": row["business_type"],
-        "gst_rate": row["gst_rate"],
-        "upi_id": row["upi_id"],
-        "token": row["token"],
+        "id": row["id"], "name": row["name"], "owner_name": row["owner_name"],
+        "phone": row["phone"], "gstin": row["gstin"], "address": row["address"],
+        "mode": row["mode"], "business_type": row["business_type"],
+        "gst_rate": row["gst_rate"], "upi_id": row["upi_id"], "token": row["token"],
     }
 
 
@@ -152,8 +211,7 @@ def create_shop(name, owner_name, phone, gstin, address, pin_hash, mode,
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO shops (name, owner_name, phone, gstin, address, pin_hash, mode, "
-        "business_type, gst_rate, upi_id, token) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "business_type, gst_rate, upi_id, token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (name, owner_name or "", phone, gstin or "", address or "", pin_hash, mode,
          business_type, gst_rate, upi_id or "", token),
     )
@@ -187,65 +245,98 @@ def update_shop(shop_id: int, **fields) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Customers
+# Customers (id-based, duplicate names allowed)
 # --------------------------------------------------------------------------- #
-def upsert_customer(shop_id: int, name: str, phone: str | None = None) -> None:
-    name = name.strip()
-    if not name:
-        return
+def _signed_sql():
+    return "COALESCE(SUM(CASE WHEN t.type='credit' THEN -t.amount ELSE t.amount END), 0)"
+
+
+def create_customer(shop_id: int, name: str, phone: str = "") -> dict:
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO customers (shop_id, name, phone) VALUES (?, ?, ?) "
-        "ON CONFLICT(shop_id, name) DO UPDATE SET phone = "
-        "CASE WHEN excluded.phone != '' THEN excluded.phone ELSE customers.phone END",
-        (shop_id, name, (phone or "").strip()),
+        "INSERT INTO customers (shop_id, name, phone) VALUES (?, ?, ?)",
+        (shop_id, name.strip(), (phone or "").strip()),
+    )
+    conn.commit()
+    cid = cur.lastrowid
+    conn.close()
+    return {"id": cid, "name": name.strip(), "phone": (phone or "").strip(), "balance": 0.0}
+
+
+def get_customer(shop_id: int, customer_id: int):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, name, phone FROM customers WHERE shop_id = ? AND id = ?",
+        (shop_id, customer_id),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def resolve_customers(shop_id: int, name: str):
+    """Return customers matching a (possibly partial) spoken name, with balances.
+
+    Exact case-insensitive match first; if none, a contains-match either way so
+    'Rahul' finds 'Rahul Sharma'. Used for voice/typed disambiguation.
+    """
+    name = (name or "").strip()
+    if not name:
+        return []
+    conn = get_connection()
+    cur = conn.cursor()
+    base = f"""
+        SELECT c.id, c.name, c.phone, {_signed_sql()} AS balance,
+               MAX(t.created_at) AS last_at
+        FROM customers c LEFT JOIN transactions t ON t.customer_id = c.id
+        WHERE c.shop_id = ? AND {{cond}}
+        GROUP BY c.id ORDER BY last_at DESC
+    """
+    rows = cur.execute(base.format(cond="LOWER(c.name) = LOWER(?)"), (shop_id, name)).fetchall()
+    if not rows:
+        like = f"%{name.lower()}%"
+        rows = cur.execute(
+            base.format(cond="(LOWER(c.name) LIKE ? OR LOWER(?) LIKE '%' || LOWER(c.name) || '%')"),
+            (shop_id, like, name),
+        ).fetchall()
+    conn.close()
+    return [{"id": r["id"], "name": r["name"], "phone": r["phone"] or "",
+             "balance": round(r["balance"], 2)} for r in rows]
+
+
+def set_customer_phone(shop_id: int, customer_id: int, phone: str) -> None:
+    conn = get_connection()
+    conn.execute(
+        "UPDATE customers SET phone = ? WHERE shop_id = ? AND id = ?",
+        ((phone or "").strip(), shop_id, customer_id),
     )
     conn.commit()
     conn.close()
-
-
-def get_customer_phone(shop_id: int, name: str) -> str:
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT phone FROM customers WHERE shop_id = ? AND name = ?", (shop_id, name)
-    ).fetchone()
-    conn.close()
-    return (row["phone"] if row else "") or ""
-
-
-def set_customer_phone(shop_id: int, name: str, phone: str) -> None:
-    upsert_customer(shop_id, name, phone)
 
 
 # --------------------------------------------------------------------------- #
 # Transactions / ledger
 # --------------------------------------------------------------------------- #
-def _signed(amount: float, ttype: str) -> float:
-    # credit = customer owes us (negative). payment = customer paid (positive).
-    return -abs(amount) if ttype == "credit" else abs(amount)
-
-
-def _customer_balance(cur, shop_id: int, name: str) -> float:
+def _balance_by_id(cur, shop_id: int, customer_id: int) -> float:
     cur.execute(
-        "SELECT amount, type FROM transactions WHERE shop_id = ? AND customer_name = ?",
-        (shop_id, name),
+        "SELECT amount, type FROM transactions WHERE shop_id = ? AND customer_id = ?",
+        (shop_id, customer_id),
     )
-    return round(sum(_signed(r["amount"], r["type"]) for r in cur.fetchall()), 2)
+    return round(sum(-abs(r["amount"]) if r["type"] == "credit" else abs(r["amount"])
+                     for r in cur.fetchall()), 2)
 
 
-def add_transaction(shop_id: int, entry) -> float:
-    upsert_customer(shop_id, entry.customer_name, entry.phone)
+def add_transaction(shop_id: int, customer_id: int, customer_name: str,
+                    amount: float, ttype: str, note: str = "", date: str = None) -> float:
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO transactions (shop_id, customer_name, amount, type, note, date) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (shop_id, entry.customer_name.strip(), abs(entry.amount), entry.type,
-         entry.note or "", entry.date),
+        "INSERT INTO transactions (shop_id, customer_id, customer_name, amount, type, note, date) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (shop_id, customer_id, customer_name.strip(), abs(amount), ttype, note or "", date),
     )
     conn.commit()
-    balance = _customer_balance(cur, shop_id, entry.customer_name.strip())
+    balance = _balance_by_id(cur, shop_id, customer_id)
     conn.close()
     return balance
 
@@ -254,63 +345,51 @@ def list_customers(shop_id: int):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        """
-        SELECT t.customer_name AS name,
-               MAX(t.created_at) AS last_at,
-               COALESCE(c.phone, '') AS phone
-        FROM transactions t
-        LEFT JOIN customers c ON c.shop_id = t.shop_id AND c.name = t.customer_name
-        WHERE t.shop_id = ?
-        GROUP BY t.customer_name
-        ORDER BY last_at DESC
+        f"""
+        SELECT c.id, c.name, c.phone, {_signed_sql()} AS balance,
+               MAX(t.created_at) AS last_at, COUNT(t.id) AS txn_count
+        FROM customers c LEFT JOIN transactions t ON t.customer_id = c.id
+        WHERE c.shop_id = ?
+        GROUP BY c.id
+        ORDER BY (last_at IS NULL), last_at DESC, c.name
         """,
         (shop_id,),
     )
-    rows = cur.fetchall()
-    out = [
-        {
-            "name": r["name"],
-            "phone": r["phone"],
-            "balance": _customer_balance(cur, shop_id, r["name"]),
-            "last_at": r["last_at"],
-        }
-        for r in rows
-    ]
+    out = [{"id": r["id"], "name": r["name"], "phone": r["phone"] or "",
+            "balance": round(r["balance"], 2), "last_at": r["last_at"],
+            "txn_count": r["txn_count"]} for r in cur.fetchall()]
     conn.close()
     return out
 
 
-def customer_history(shop_id: int, name: str):
+def customer_history(shop_id: int, customer_id: int):
     conn = get_connection()
     cur = conn.cursor()
+    info = cur.execute(
+        "SELECT id, name, phone FROM customers WHERE shop_id = ? AND id = ?",
+        (shop_id, customer_id),
+    ).fetchone()
+    if not info:
+        conn.close()
+        return None
     cur.execute(
         "SELECT id, amount, type, note, date, created_at FROM transactions "
-        "WHERE shop_id = ? AND customer_name = ? ORDER BY id DESC",
-        (shop_id, name),
+        "WHERE shop_id = ? AND customer_id = ? ORDER BY id DESC",
+        (shop_id, customer_id),
     )
-    txns = [
-        {
-            "id": r["id"],
-            "amount": r["amount"],
-            "type": r["type"],
-            "note": r["note"],
-            "date": r["date"] or r["created_at"],
-            "created_at": r["created_at"],
-        }
-        for r in cur.fetchall()
-    ]
-    balance = _customer_balance(cur, shop_id, name)
-    phone = get_customer_phone(shop_id, name)
+    txns = [{"id": r["id"], "amount": r["amount"], "type": r["type"], "note": r["note"],
+             "date": r["date"] or r["created_at"], "created_at": r["created_at"]}
+            for r in cur.fetchall()]
+    balance = _balance_by_id(cur, shop_id, customer_id)
     conn.close()
-    return txns, balance, phone
+    return {"id": info["id"], "name": info["name"], "phone": info["phone"] or "",
+            "transactions": txns, "balance": balance}
 
 
 def delete_transaction(shop_id: int, txn_id: int) -> bool:
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute(
-        "DELETE FROM transactions WHERE id = ? AND shop_id = ?", (txn_id, shop_id)
-    )
+    cur.execute("DELETE FROM transactions WHERE id = ? AND shop_id = ?", (txn_id, shop_id))
     conn.commit()
     changed = cur.rowcount > 0
     conn.close()
@@ -318,49 +397,43 @@ def delete_transaction(shop_id: int, txn_id: int) -> bool:
 
 
 def summary(shop_id: int) -> dict:
-    """Dashboard totals: total receivable, advances, customer count, today's tally."""
     customers = list_customers(shop_id)
     receivable = round(sum(-c["balance"] for c in customers if c["balance"] < 0), 2)
     advance = round(sum(c["balance"] for c in customers if c["balance"] > 0), 2)
-    due_customers = [c for c in customers if c["balance"] < 0]
+    due = [c for c in customers if c["balance"] < 0]
 
     today = datetime.now().strftime("%Y-%m-%d")
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT amount, type FROM transactions "
-        "WHERE shop_id = ? AND date(created_at) = ?",
+        "SELECT amount, type FROM transactions WHERE shop_id = ? AND date(created_at) = ?",
         (shop_id, today),
     )
-    today_credit = today_payment = 0.0
+    tc = tp = 0.0
     for r in cur.fetchall():
         if r["type"] == "credit":
-            today_credit += abs(r["amount"])
+            tc += abs(r["amount"])
         else:
-            today_payment += abs(r["amount"])
+            tp += abs(r["amount"])
     conn.close()
-
     return {
-        "total_receivable": receivable,
-        "total_advance": advance,
-        "customer_count": len(customers),
-        "due_count": len(due_customers),
-        "today_credit": round(today_credit, 2),
-        "today_payment": round(today_payment, 2),
-        "top_debtors": sorted(due_customers, key=lambda c: c["balance"])[:5],
+        "total_receivable": receivable, "total_advance": advance,
+        "customer_count": len(customers), "due_count": len(due),
+        "today_credit": round(tc, 2), "today_payment": round(tp, 2),
+        "top_debtors": sorted(due, key=lambda c: c["balance"])[:5],
     }
 
 
 # --------------------------------------------------------------------------- #
 # Invoices
 # --------------------------------------------------------------------------- #
-def save_invoice(shop_id, invoice_id, customer_name, items_json, total, date, pdf_path):
+def save_invoice(shop_id, customer_id, invoice_id, customer_name, items_json, total, date, pdf_path):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO invoices (shop_id, invoice_id, customer_name, items_json, total, date, pdf_path) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (shop_id, invoice_id, customer_name, items_json, total, date, pdf_path),
+        "INSERT INTO invoices (shop_id, customer_id, invoice_id, customer_name, items_json, total, date, pdf_path) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (shop_id, customer_id, invoice_id, customer_name, items_json, total, date, pdf_path),
     )
     conn.commit()
     conn.close()
@@ -374,18 +447,9 @@ def list_invoices(shop_id: int):
         "FROM invoices WHERE shop_id = ? ORDER BY id DESC",
         (shop_id,),
     )
-    import json
-
-    out = [
-        {
-            "invoice_id": r["invoice_id"],
-            "customer_name": r["customer_name"],
-            "items": json.loads(r["items_json"] or "[]"),
-            "total": r["total"],
-            "date": r["date"] or r["created_at"],
-        }
-        for r in cur.fetchall()
-    ]
+    out = [{"invoice_id": r["invoice_id"], "customer_name": r["customer_name"],
+            "items": json.loads(r["items_json"] or "[]"), "total": r["total"],
+            "date": r["date"] or r["created_at"]} for r in cur.fetchall()]
     conn.close()
     return out
 
@@ -393,8 +457,17 @@ def list_invoices(shop_id: int):
 def invoice_belongs_to_shop(shop_id: int, invoice_id: str) -> bool:
     conn = get_connection()
     row = conn.execute(
-        "SELECT 1 FROM invoices WHERE shop_id = ? AND invoice_id = ?",
-        (shop_id, invoice_id),
+        "SELECT 1 FROM invoices WHERE shop_id = ? AND invoice_id = ?", (shop_id, invoice_id)
     ).fetchone()
     conn.close()
     return row is not None
+
+
+def delete_invoice(shop_id: int, invoice_id: str) -> bool:
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM invoices WHERE shop_id = ? AND invoice_id = ?", (shop_id, invoice_id))
+    conn.commit()
+    changed = cur.rowcount > 0
+    conn.close()
+    return changed

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, auth } from '../api'
 import { t } from '../i18n'
 import { formatRupee, timeAgo } from '../lib/format'
-import { Plus, Receipt, WhatsApp, Download } from '../components/Icons'
+import { Plus, Receipt, WhatsApp, Eye, Trash } from '../components/Icons'
 import { shareInvoice } from '../lib/share'
 import InvoicePreview from '../components/InvoicePreview'
+import { useToast } from '../components/Toast'
 
 export default function Invoices({ lang, nav }) {
   const tr = (k) => t(lang, k)
+  const toast = useToast()
   const [invoices, setInvoices] = useState([])
   const [loading, setLoading] = useState(true)
   const [preview, setPreview] = useState(null)
@@ -20,6 +22,18 @@ export default function Invoices({ lang, nav }) {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const del = async (inv) => {
+    const msg = lang === 'hi' ? 'क्या आप यह बिल हटाना चाहते हैं?'
+      : lang === 'kn' ? 'ಈ ಬಿಲ್ ಅಳಿಸಲು ಬಯಸುವಿರಾ?'
+      : 'Are you sure you want to delete this invoice?'
+    if (!window.confirm(msg)) return
+    try {
+      await api.deleteInvoice(inv.invoice_id)
+      setInvoices((list) => list.filter((x) => x.invoice_id !== inv.invoice_id))
+      toast(lang === 'hi' ? 'बिल हटाया गया' : lang === 'kn' ? 'ಬಿಲ್ ಅಳಿಸಲಾಗಿದೆ' : 'Invoice deleted')
+    } catch { toast(tr('somethingWrong'), 'error') }
+  }
 
   return (
     <div className="screen">
@@ -51,8 +65,11 @@ export default function Invoices({ lang, nav }) {
               <button className="pill pill--wa" onClick={() => shareInvoice(inv, auth.shop)}>
                 <WhatsApp /> {tr('shareWhatsApp')}
               </button>
-              <button className="pill" onClick={() => setPreview(inv)}>
-                <Download /> {tr('viewPdf')}
+              <button className="pill" onClick={() => setPreview(inv)} aria-label={tr('viewPdf')}>
+                <Eye /> {tr('viewPdf')}
+              </button>
+              <button className="pill pill--danger" onClick={() => del(inv)} aria-label={tr('deleteTxn')}>
+                <Trash />
               </button>
             </div>
           </li>

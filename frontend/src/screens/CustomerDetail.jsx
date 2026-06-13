@@ -5,7 +5,7 @@ import { balanceMeta, formatRupee, timeAgo } from '../lib/format'
 import { Back, Phone, Plus, Trash, WhatsApp } from '../components/Icons'
 import { useToast } from '../components/Toast'
 
-export default function CustomerDetail({ lang, name, nav }) {
+export default function CustomerDetail({ lang, customerId, nav }) {
   const tr = (k) => t(lang, k)
   const toast = useToast()
   const [data, setData] = useState(null)
@@ -14,8 +14,9 @@ export default function CustomerDetail({ lang, name, nav }) {
   const [note, setNote] = useState('')
 
   const load = useCallback(async () => {
-    try { setData(await api.customer(name)) } catch { setData({ transactions: [], balance: 0, phone: '' }) }
-  }, [name])
+    try { setData(await api.customer(customerId)) }
+    catch { setData({ id: customerId, name: '', transactions: [], balance: 0, phone: '' }) }
+  }, [customerId])
 
   useEffect(() => { load() }, [load])
 
@@ -23,7 +24,7 @@ export default function CustomerDetail({ lang, name, nav }) {
     const amount = parseFloat(amt)
     if (!amount || amount <= 0) return toast(tr('amount') + ' ' + tr('required'), 'error')
     try {
-      await api.logTransaction({ customer_name: name, amount, type, note })
+      await api.logTransaction({ customer_id: customerId, amount, type, note })
       setAdding(null); setAmt(''); setNote('')
       toast(lang === 'hi' ? 'हो गया' : 'Done')
       load()
@@ -33,7 +34,7 @@ export default function CustomerDetail({ lang, name, nav }) {
   const settle = async () => {
     if (!data || data.balance >= 0) return
     try {
-      await api.logTransaction({ customer_name: name, amount: Math.abs(data.balance), type: 'payment', note: 'Settled' })
+      await api.logTransaction({ customer_id: customerId, amount: Math.abs(data.balance), type: 'payment', note: 'Settled' })
       toast(lang === 'hi' ? 'पूरा चुकता हो गया ✅' : 'Settled ✅')
       load()
     } catch { toast(tr('somethingWrong'), 'error') }
@@ -41,7 +42,7 @@ export default function CustomerDetail({ lang, name, nav }) {
 
   const remind = async () => {
     try {
-      const res = await api.sendReminder({ customer_name: name, amount: data.balance, phone: data.phone })
+      const res = await api.sendReminder({ customer_name: data.name, amount: data.balance, phone: data.phone })
       window.open(res.wa_link, '_blank')
     } catch { toast(tr('somethingWrong'), 'error') }
   }
@@ -49,7 +50,7 @@ export default function CustomerDetail({ lang, name, nav }) {
   const addPhone = async () => {
     const p = prompt(tr('addPhone'))
     if (!p) return
-    try { await api.setPhone(name, p.replace(/\D/g, '')); toast(lang === 'hi' ? 'नंबर सेव हुआ' : 'Phone saved'); load() }
+    try { await api.setPhone(customerId, p.replace(/\D/g, '')); toast(lang === 'hi' ? 'नंबर सेव हुआ' : 'Phone saved'); load() }
     catch { toast(tr('somethingWrong'), 'error') }
   }
 
@@ -64,7 +65,7 @@ export default function CustomerDetail({ lang, name, nav }) {
     <div className="screen overlay">
       <header className="topbar topbar--detail">
         <button className="icon-btn" onClick={nav.close} aria-label="back"><Back /></button>
-        <h2 className="topbar-shop">{name}</h2>
+        <h2 className="topbar-shop">{data.name}{data.phone ? ` · ${data.phone}` : ''}</h2>
         <span style={{ width: 40 }} />
       </header>
 

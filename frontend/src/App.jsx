@@ -3,8 +3,9 @@ import './App.css'
 
 import { api, auth } from './api'
 import { t } from './i18n'
-import { Book, Gear, Home as HomeIcon, Receipt } from './components/Icons'
+import { Book, Gear, Home as HomeIcon, Receipt, Mic } from './components/Icons'
 import { ToastProvider } from './components/Toast'
+import VoiceAssistant from './components/VoiceAssistant'
 import Onboarding from './screens/Onboarding'
 import HomeScreen from './screens/Home'
 import Ledger from './screens/Ledger'
@@ -18,6 +19,8 @@ function App() {
   const [shop, setShop] = useState(auth.shop)
   const [tab, setTab] = useState('home')
   const [overlay, setOverlay] = useState(null)
+  const [voice, setVoice] = useState(null) // { prefill } | null
+  const [refreshNonce, setRefreshNonce] = useState(0)
 
   const setLang = useCallback((l) => {
     localStorage.setItem('bk_lang', l)
@@ -43,8 +46,10 @@ function App() {
   }, [])
 
   const nav = {
-    openCustomer: (name) => setOverlay({ type: 'customer', name }),
+    openCustomer: (id) => setOverlay({ type: 'customer', id }),
     openInvoiceCreate: (prefill) => setOverlay({ type: 'invoiceCreate', prefill }),
+    openVoice: (prefill = '') => setVoice({ prefill }),
+    refresh: () => setRefreshNonce((n) => n + 1),
     close: () => setOverlay(null),
     go: (newTab) => {
       setOverlay(null)
@@ -73,40 +78,59 @@ function App() {
     <ToastProvider>
       <div className="app">
         <main className="main">
-          {tab === 'home' && <HomeScreen lang={lang} nav={nav} />}
-          {tab === 'ledger' && <Ledger lang={lang} nav={nav} />}
-          {tab === 'invoices' && <Invoices lang={lang} nav={nav} />}
+          {tab === 'home' && <HomeScreen key={`home-${refreshNonce}`} lang={lang} nav={nav} />}
+          {tab === 'ledger' && <Ledger key={`ledger-${refreshNonce}`} lang={lang} nav={nav} />}
+          {tab === 'invoices' && <Invoices key={`inv-${refreshNonce}`} lang={lang} nav={nav} />}
           {tab === 'settings' && (
             <Settings lang={lang} setLang={setLang} shop={shop} setShop={setShop} onLogout={logout} />
           )}
 
           {overlay?.type === 'customer' && (
-            <CustomerDetail lang={lang} name={overlay.name} nav={nav} />
+            <CustomerDetail lang={lang} customerId={overlay.id} nav={nav} />
           )}
           {overlay?.type === 'invoiceCreate' && (
             <InvoiceCreate lang={lang} prefill={overlay.prefill} nav={nav} />
           )}
         </main>
 
-        <nav className="bottom-nav" aria-label="Main">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            const active = tab === item.id && !overlay
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={`nav-item ${active ? 'nav-item--active' : ''}`}
-                onClick={() => nav.go(item.id)}
-              >
-                <Icon />
-                <span>{item.label}</span>
-              </button>
-            )
-          })}
+        <nav className="bottom-nav bottom-nav--fab" aria-label="Main">
+          {navItems.slice(0, 2).map((item) => (
+            <NavBtn key={item.id} item={item} tab={tab} overlay={overlay} nav={nav} />
+          ))}
+          <button type="button" className="nav-mic" onClick={() => nav.openVoice()} aria-label="voice">
+            <Mic />
+          </button>
+          {navItems.slice(2).map((item) => (
+            <NavBtn key={item.id} item={item} tab={tab} overlay={overlay} nav={nav} />
+          ))}
         </nav>
+
+        {voice && (
+          <VoiceAssistant
+            lang={lang}
+            prefill={voice.prefill}
+            nav={nav}
+            onClose={() => setVoice(null)}
+            onLogged={() => { setVoice(null); nav.refresh() }}
+          />
+        )}
       </div>
     </ToastProvider>
+  )
+}
+
+function NavBtn({ item, tab, overlay, nav }) {
+  const Icon = item.icon
+  const active = tab === item.id && !overlay
+  return (
+    <button
+      type="button"
+      className={`nav-item ${active ? 'nav-item--active' : ''}`}
+      onClick={() => nav.go(item.id)}
+    >
+      <Icon />
+      <span>{item.label}</span>
+    </button>
   )
 }
 

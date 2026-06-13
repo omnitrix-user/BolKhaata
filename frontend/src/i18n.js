@@ -55,6 +55,13 @@ export const STR = {
   reviewHint: { hi: 'ज़रूरत हो तो ठीक करें, फिर आगे बढ़ें', kn: 'ಬೇಕಿದ್ದರೆ ಸರಿಪಡಿಸಿ, ನಂತರ ಮುಂದುವರಿ', en: 'Edit if needed, then continue' },
   confirmText: { hi: 'सही है, आगे बढ़ें', kn: 'ಸರಿ, ಮುಂದುವರಿ', en: 'Confirm' },
   reRecord: { hi: 'फिर बोलें', kn: 'ಮತ್ತೆ ಹೇಳಿ', en: 'Re-record' },
+  voiceTitle: { hi: 'बोलिए', kn: 'ಮಾತನಾಡಿ', en: 'Speak' },
+  actionQuestion: { hi: 'इसका क्या करें?', kn: 'ಇದಕ್ಕೆ ಏನು ಮಾಡಬೇಕು?', en: 'What would you like to do?' },
+  actionInvoice: { hi: 'बिल बनाएं', kn: 'ಬಿಲ್ ರಚಿಸಿ', en: 'Generate Invoice' },
+  actionKhata: { hi: 'खाते में डालें', kn: 'ಖಾತೆಗೆ ಸೇರಿಸಿ', en: 'Add to Khata' },
+  whichCustomer: { hi: 'कौन सा ग्राहक?', kn: 'ಯಾವ ಗ್ರಾಹಕ?', en: 'Which customer?' },
+  newCustomer: { hi: '+ नया ग्राहक बनाएं', kn: '+ ಹೊಸ ಗ್ರಾಹಕ', en: '+ New customer' },
+  opened: { hi: 'खोल दिया', kn: 'ತೆರೆಯಲಾಗಿದೆ', en: 'Opened' },
 
   // confirm
   confirmEntry: { hi: 'सही है?', kn: 'ಸರಿಯೇ?', en: 'Confirm entry' },

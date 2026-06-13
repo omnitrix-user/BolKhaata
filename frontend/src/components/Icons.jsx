@@ -66,9 +66,21 @@ export const Check = (p) => (
   </svg>
 )
 
+export const X = (p) => (
+  <svg viewBox="0 0 24 24" {...s} {...p} aria-hidden="true">
+    <path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 5.7 18.3 4.3 16.9 10.6 12 4.3 5.7 5.7 4.3 12 10.6l4.9-4.9 1.4 1.4Z" />
+  </svg>
+)
+
 export const Search = (p) => (
   <svg viewBox="0 0 24 24" {...s} {...p} aria-hidden="true">
     <path d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5Zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Z" />
+  </svg>
+)
+
+export const Eye = (p) => (
+  <svg viewBox="0 0 24 24" {...s} {...p} aria-hidden="true">
+    <path d="M12 5c-5 0-9 4.5-10 7 1 2.5 5 7 10 7s9-4.5 10-7c-1-2.5-5-7-10-7Zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8Zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
   </svg>
 )
 

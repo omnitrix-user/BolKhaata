@@ -42,12 +42,12 @@ export default function Ledger({ lang, nav }) {
         {filtered.map((c) => {
           const m = balanceMeta(c.balance)
           return (
-            <li key={c.name}>
-              <button className="row" onClick={() => nav.openCustomer(c.name)}>
+            <li key={c.id}>
+              <button className="row" onClick={() => nav.openCustomer(c.id)}>
                 <span className="avatar" style={{ background: m.color }}>{c.name[0]?.toUpperCase()}</span>
                 <span className="row-main">
                   <span className="row-title">{c.name}</span>
-                  <span className="row-sub dev">{timeAgo(c.last_at, lang)}</span>
+                  <span className="row-sub dev">{c.phone ? `${c.phone} · ` : ''}{timeAgo(c.last_at, lang)}</span>
                 </span>
                 <span className="row-end">
                   <b className="num" style={{ color: m.color }}>{formatRupee(c.balance)}</b>

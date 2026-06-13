@@ -88,13 +88,17 @@ export const api = {
 
   logTransaction: (entry) => request('/log-transaction', { method: 'POST', body: entry }),
   ledger: () => request('/ledger'),
-  customer: (name) => request(`/ledger/${encodeURIComponent(name)}`),
+  customer: (id) => request(`/customer/${id}`),
+  resolveCustomers: (name) => request('/customers/resolve', { method: 'POST', body: { name } }),
+  createCustomer: (name, phone = '') =>
+    request('/customers', { method: 'POST', body: { name, phone } }),
   deleteTransaction: (id) => request(`/transaction/${id}`, { method: 'DELETE' }),
-  setPhone: (name, phone) =>
-    request(`/customer/${encodeURIComponent(name)}/phone`, { method: 'POST', body: { phone } }),
+  setPhone: (id, phone) =>
+    request(`/customer/${id}/phone`, { method: 'POST', body: { phone } }),
   summary: () => request('/summary'),
 
   invoices: () => request('/invoices'),
+  deleteInvoice: (invoiceId) => request(`/invoice/${invoiceId}`, { method: 'DELETE' }),
   sendReminder: (payload) => request('/send-reminder', { method: 'POST', body: payload }),
 
   // Returns { invoice_id, total, image_url, pdf_url }.
