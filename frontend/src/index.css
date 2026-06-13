@@ -1,25 +1,48 @@
+/* ------------------------------------------------------------------ *
+ * BolKhaata — Brand Design System
+ * "The trusted khata, now in your voice."
+ * ------------------------------------------------------------------ */
 :root {
-  --bg: #1a1410;
-  --surface: #241c16;
-  --text-h: #f5ebe0;
-  --text: #d4c4b0;
-  --text-muted: #8a7762;
-  --accent: #e8a04a;
-  --accent-dark: #c47f2a;
-  --accent-glow: rgba(232, 160, 74, 0.2);
-  --border: #3d3228;
-  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  /* Brand palette */
+  --saffron: #f5a623;
+  --saffron-dark: #d98c12;
+  --turmeric: #e8c547;
+  --warm-black: #0f0e0c;
+  --chai: #1a1814;
+  --chai-2: #221f19;
+  --warm-white: #f5f0e8;
+  --green: #4caf7d;
+  --green-soft: rgba(76, 175, 125, 0.16);
+  --red: #e05c5c;
+  --red-soft: rgba(224, 92, 92, 0.16);
+  --grey: #9e9689;
 
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Derived surfaces */
+  --bg: var(--warm-black);
+  --surface: var(--chai);
+  --surface-2: var(--chai-2);
+  --border: #2e2a22;
+  --border-strong: #3d3830;
+  --text: var(--warm-white);
+  --text-muted: var(--grey);
+  --saffron-glow: rgba(245, 166, 35, 0.22);
+
+  --radius: 18px;
+  --radius-sm: 12px;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --maxw: 440px;
+
+  font-family: 'Inter', 'Noto Sans Devanagari', 'Noto Sans Kannada', system-ui, -apple-system, sans-serif;
   font-size: 16px;
   line-height: 1.5;
   color: var(--text);
   background: var(--bg);
   color-scheme: dark;
-  font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
 }
 
 *,
@@ -28,10 +51,12 @@
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
   min-height: 100svh;
   background: var(--bg);
+  overscroll-behavior-y: none;
 }
 
 #root {
@@ -40,4 +65,38 @@ body {
 
 button {
   font-family: inherit;
+  cursor: pointer;
+}
+
+/* Indic helper — Devanagari + Kannada, balanced with Inter */
+.dev {
+  font-family: 'Noto Sans Devanagari', 'Noto Sans Kannada', sans-serif;
+}
+
+/* Numbers always semibold per brand */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

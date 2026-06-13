@@ -1,4 +1,23 @@
+# secrets
 .env
+
+# python
 __pycache__/
+.venv/
+venv/
+
+# node / build
 node_modules/
 dist/
+
+# app-generated data
+*.db
+backend/invoices/
+
+# logs & os
+*.log
+.DS_Store
+
+# local tooling / agent config
+.claude/
+.cursor/
