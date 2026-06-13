@@ -1,81 +1,102 @@
 # BolKhaata — Database
 
-**Engine:** SQLite (file-based)
-**File:** `backend/bolkhaata.db`
+**Engine:** SQLite (file-based) · **File:** `backend/bolkhaata.db` (gitignored)
 **Access layer:** [`backend/database.py`](backend/database.py) (raw `sqlite3`, no ORM)
-**Schema creation:** `init_db()` runs on FastAPI startup and is idempotent (`CREATE TABLE IF NOT EXISTS`).
+**Schema creation/migration:** `init_db()` runs on startup — idempotent `CREATE TABLE IF NOT EXISTS`, additive `ALTER TABLE` migrations, an index pass, and a one-time backfill linking legacy name-based rows to customer ids. `PRAGMA foreign_keys = ON`.
+
+> Updated for the id-based, multi-shop, duplicate-name model.
 
 ---
 
 ## Schema
 
-### Table: `transactions`
-Every ledger entry (one row per credit or payment).
-
+### `shops` — one row per shop account (the tenant)
 | Column | Type | Notes |
 |--------|------|-------|
-| `id` | INTEGER PK AUTOINCREMENT | |
-| `customer_name` | TEXT NOT NULL | Customers are **identified by name only** — there is no customers table |
-| `amount` | REAL NOT NULL | Stored as an **absolute (unsigned)** value |
-| `type` | TEXT NOT NULL | `'credit'` (udhaar, owes us) or `'payment'` (received) |
-| `note` | TEXT DEFAULT '' | Free text |
-| `date` | TEXT | Human string like `"13 Jun"`; defaults to current date if absent |
-| `phone` | TEXT | Optional customer phone |
-| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | Server insert time |
+| `id` | INTEGER PK | |
+| `name`, `owner_name`, `address`, `gstin`, `upi_id` | TEXT | profile |
+| `phone` | TEXT **UNIQUE** NOT NULL | login identity |
+| `pin_hash` | TEXT NOT NULL | PBKDF2 `salt$iterations$hash` |
+| `token` | TEXT **UNIQUE** NOT NULL | session token (`X-Shop-Token`); rotates on login |
+| `mode` | TEXT | `single` / `multi` |
+| `business_type` | TEXT | `standard` / `street_vendor` (forces gst_rate 0) |
+| `gst_rate` | REAL | default invoice GST % |
+| `created_at` | TIMESTAMP | |
 
-### Table: `invoices`
-One row per generated invoice PDF.
-
+### `customers` — first-class identities (duplicate names allowed)
 | Column | Type | Notes |
 |--------|------|-------|
-| `id` | INTEGER PK AUTOINCREMENT | |
-| `invoice_id` | TEXT | e.g. `INV250613...`; not unique-constrained |
+| `id` | INTEGER PK | **the real identity** |
+| `shop_id` | INTEGER NOT NULL | FK → shops, `ON DELETE CASCADE` |
+| `name` | TEXT NOT NULL | **NOT unique** — many customers can share a name |
+| `phone` | TEXT | disambiguator / for reminders |
+| `created_at` | TIMESTAMP | |
+
+> There is intentionally **no `UNIQUE(shop_id, name)`**. Names are not identifiers; the integer `id` is. `init_db()` migrates older DBs that still had the unique constraint by rebuilding the table.
+
+### `transactions` — one row per credit/payment
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | INTEGER PK | |
+| `shop_id` | INTEGER NOT NULL | FK → shops, cascade |
+| `customer_id` | INTEGER | **the link used for balances** |
+| `customer_name` | TEXT NOT NULL | denormalised for display |
+| `amount` | REAL NOT NULL | stored **unsigned** |
+| `type` | TEXT NOT NULL | `credit` (owes us) / `payment` (paid us) |
+| `note`, `date` | TEXT | `date` is a human string (e.g. `"13 Jun"`) |
+| `created_at` | TIMESTAMP | |
+
+### `invoices` — one row per generated invoice
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | INTEGER PK | |
+| `shop_id` | INTEGER NOT NULL | FK → shops, cascade |
+| `customer_id` | INTEGER | best-effort link (powers "last invoice of X") |
+| `invoice_id` | TEXT | display id, e.g. `INV260613...` |
 | `customer_name` | TEXT NOT NULL | |
-| `total` | REAL NOT NULL | Grand total incl. GST |
-| `date` | TEXT | Human string |
-| `pdf_path` | TEXT | Absolute path to the generated PDF on disk |
-| `created_at` | TIMESTAMP DEFAULT CURRENT_TIMESTAMP | |
+| `items_json` | TEXT | full line items as JSON (now persisted) |
+| `total` | REAL NOT NULL | grand total incl. GST |
+| `date`, `pdf_path` | TEXT | |
+| `created_at` | TIMESTAMP | |
 
-> Invoice line items are **not** stored — only the total. The PDF on disk is the only record of line detail. `sqlite_sequence` is SQLite's internal autoincrement bookkeeping table.
-
----
-
-## Balance convention (important)
-
-Amounts are stored **unsigned**; the sign is applied at read time in `_signed()`:
-
-```
-credit  → -amount   (customer owes us)
-payment → +amount   (customer paid us)
-balance  = sum of signed amounts, rounded to 2 dp
-```
-
-So a **negative balance means the customer still owes money**, and a positive/zero balance means settled or overpaid.
-
-> ⚠️ The frontend ledger view highlights a balance as "due" when `balance > 0`, which is the **opposite** of this convention. See the bug note in [TODO.md](TODO.md).
-
-Balances are **computed on the fly** (`_customer_balance`) by summing all of a customer's rows — they are not cached or stored. This is simple and always-correct but scans all of a customer's transactions per read.
+**Indexes:** `transactions(shop_id, customer_id)`, `customers(shop_id, name)`, `invoices(shop_id)`.
 
 ---
 
-## Data access functions ([`database.py`](backend/database.py))
+## Balance convention
+
+Amounts are stored **unsigned**; sign applied at read time:
+
+```
+credit  → -amount   (customer owes the shop)
+payment → +amount   (customer paid the shop)
+balance  = SUM(signed) per customer_id, rounded to 2dp
+```
+
+A **negative balance means the customer still owes**. Balances are computed by
+`customer_id` (`_balance_by_id` / the `_signed_sql()` SUM in list/resolve queries),
+so two customers who share a name keep **independent** balances.
+
+---
+
+## Key data-access functions
 
 | Function | Purpose |
 |----------|---------|
-| `init_db()` | Create tables if missing |
-| `add_transaction(entry)` | Insert a row, return the customer's new signed balance |
-| `list_customers()` | Distinct customer names, each with computed balance |
-| `customer_history(name)` | All of a customer's transactions (newest first) + balance |
-| `save_invoice(...)` | Persist an invoice record |
-| `_signed`, `_customer_balance` | Internal balance helpers |
+| `create_customer` | always inserts a NEW customer (never dedupes) |
+| `resolve_exact(shop, name)` | **exact** case-insensitive matches only — used for all auto-resolution |
+| `search_customers(shop, q)` | fuzzy `LIKE` — search UI only, never auto-resolves |
+| `add_transaction(shop, customer_id, …)` | insert + return new signed balance |
+| `customer_history(shop, customer_id)` | txns + balance for one id |
+| `list_customers` / `summary` | ledger list + dashboard totals |
+| `list_invoices(shop, customer_id=None)` | all or per-customer invoices (newest first) |
 
 ---
 
-## Notes, limitations & risks
+## Limitations / known issues (see [TODO.md](TODO.md))
 
-- **No customers table / no foreign keys.** A customer is just a string that recurs across rows. Renames, merges, and typos create distinct "customers" (e.g. *"Ramesh"* vs *"ramesh"* are different).
-- **No indexes** beyond the implicit primary key. `WHERE customer_name = ?` does a full scan; fine at small scale, slow as data grows. An index on `customer_name` is recommended.
-- **No multi-tenancy.** There is no `user`/`shop` table — the DB holds one shopkeeper's data and has no auth (see [API_FLOW.md](API_FLOW.md)).
-- **No migrations.** Schema changes must be applied manually; `init_db` only ever adds missing tables, never alters existing ones.
-- **`bolkhaata.db` is committed to git** and currently contains test data (2 transactions). Consider gitignoring it so real data and test data don't mix.
-- **`date` is an unparseable display string**, not an ISO date — it can't be sorted or range-queried reliably. Ordering uses `id` / `created_at` instead.
+- `summary()`'s "today" totals compare local `datetime.now()` against UTC
+  `created_at` — can be off near midnight / outside UTC.
+- `date` is a display string, not ISO — not range-queryable; ordering uses `id`/`created_at`.
+- Token rotates on every login → effectively one active session per shop.
+- No schema-version migrations framework (only additive `ALTER`/rebuild in `init_db`).

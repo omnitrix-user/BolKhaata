@@ -1,98 +1,105 @@
 # BolKhaata — API & Flows
 
-Base URL (dev): `http://localhost:8000`
-Defined in [`backend/main.py`](backend/main.py). CORS allows only `http://localhost:5173`.
+Base URL (dev): `http://localhost:8000` · defined in [`backend/main.py`](backend/main.py).
+CORS: `CORS_ORIGINS` env or default localhost + LAN IPs.
+
+## Authentication
+
+- A shop **registers** with a phone + PIN and receives an opaque **token**.
+- Protected routes require that token in the **`X-Shop-Token`** header (resolved by `auth.require_shop` → the `shop` row). Missing/invalid → `401`.
+- PINs are stored as PBKDF2-HMAC-SHA256 hashes; the token **rotates on each login**.
+- Invoice **file** routes accept the token as a `?token=` query param (so `<img>`/PDF links work).
+- Open routes: `GET /health`, `POST /auth/register`, `POST /auth/login`.
+
+> All data is scoped to the authenticated `shop_id`.
 
 ---
 
 ## Endpoints
 
-### `GET /health`
-Liveness probe. → `{"status": "ok"}`
+### Auth
+| Method | Path | Body / notes |
+|--------|------|--------------|
+| POST | `/auth/register` | `{name, phone, pin, …}` → `{shop}` (409 if phone taken) |
+| POST | `/auth/login` | `{phone, pin}` → `{shop}` with fresh token (401 on bad creds) |
+| GET | `/auth/me` | current shop profile |
+| PATCH | `/auth/me` | update profile fields |
 
-### `POST /transcribe`
-Speech-to-text.
-- **Body:** `multipart/form-data` with field `audio` (the recorded blob).
-- **Calls:** OpenAI Whisper (`whisper-1`) via [`stt.py`](backend/stt.py).
-- **Returns:** `{"transcript": "<text>"}`. Returns `""` if `OPENAI_API_KEY` is unset or the call fails (never errors).
+### Voice
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/transcribe` | multipart `audio` → `{transcript}` (server Whisper; `""` if no key) |
+| POST | `/parse-intent` | `{transcript}` → `{type:"khata"\|"invoice"\|"unknown", data}` (LLM or heuristic) |
 
-### `POST /parse-intent`
-Classify a transcript into a structured intent.
-- **Body:** `{"transcript": "Ramesh ko 200 udhaar"}`
-- **Calls:** OpenRouter LLM via [`intent_parser.py`](backend/intent_parser.py).
-- **Returns one of:**
-  - `{"type":"khata","data":{customer_name, amount, txn:"credit"|"payment", note, phone}}`
-  - `{"type":"invoice","data":{items:[{name, qty, rate, gst}]}}`
-  - `{"type":"unknown","data":{}}` (also returned on any failure or missing `OPENROUTER_API_KEY`).
+### Customers / khata / ledger (id-based)
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/ledger` | all customers + balances |
+| GET | `/customer/{id}` | one customer: profile, txn history, balance |
+| GET | `/customer/{id}/invoices` | that customer's invoices, newest first |
+| POST | `/customers/resolve` | `{name}` → `{matches}` — **EXACT** matches only (disambiguation) |
+| POST | `/customers/search` | `{name}` → `{matches}` — fuzzy contains (search only) |
+| POST | `/customers` | `{name, phone?}` → always creates a **new** customer (even if name exists) |
+| POST | `/customer/{id}/phone` | set/replace phone |
+| POST | `/log-transaction` | `{customer_id? \| customer_name, amount, type, note?, phone?}` → `{balance, customer_id, customer_name}` |
+| DELETE | `/transaction/{txn_id}` | remove an entry |
+| GET | `/summary` | dashboard totals (receivable, advance, today, top debtors) |
 
-### `POST /log-transaction`
-Record a ledger entry.
-- **Body** (`KhataEntry`): `{customer_name, amount, type:"credit"|"payment", note?, date?, phone?}`
-- If `date` is empty, the server fills `"%d %b"` (e.g. `"13 Jun"`).
-- **Returns:** `{"success": true, "balance": <new signed balance>}`.
+### Invoices
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/generate-invoice` | build PDF+JPG, persist, return `{invoice_id, total, image_url, pdf_url}` |
+| GET | `/invoices` | all invoices for the shop |
+| GET | `/invoice/{id}` / `/invoice/{id}/image` | PDF / JPG file (`?token=` auth) |
+| DELETE | `/invoice/{id}` | remove record + files |
 
-### `GET /ledger`
-All customers with balances. → `{"customers":[{name, balance}, ...]}`
-
-### `GET /ledger/{name}`
-One customer's history. → `{"transactions":[{amount, type, note, date}, ...], "balance": <signed>}` (newest first).
-
-### `POST /generate-invoice`
-Build + persist a GST invoice PDF.
-- **Body** (`Invoice`): `{invoice_id?, customer_name, items:[{name, qty, rate, gst}], total?, date?}`
-- **Calls:** [`invoice_generator.py`](backend/invoice_generator.py) (ReportLab), then `database.save_invoice`.
-- **Returns:** the **PDF file** (`application/pdf`) with custom headers `X-Invoice-Id`, `X-Invoice-Total`, `X-Invoice-Url` (exposed via CORS).
-
-### `GET /invoice/{invoice_id}`
-Fetch a previously generated PDF by id from `backend/invoices/`. → PDF, or `404 {"error":"not found"}`.
-
-### `POST /send-reminder`
-Send a WhatsApp payment reminder.
-- **Body** (`ReminderIn`): `{customer_name, phone?, amount}`
-- **Calls:** Twilio via [`whatsapp.py`](backend/whatsapp.py).
-- **Returns:** `{"success": <bool>}` — `false` if Twilio creds or phone are missing (never errors).
+### Reminders
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/send-reminder` | `{customer_name, amount, phone?}` → `{wa_link, auto_sent, message}` |
 
 ---
 
-## Primary user flow — voice entry
+## Customer resolution — the core rule
+
+Used by `/log-transaction` and the voice open-commands ([`_resolve_customer`](backend/main.py)):
 
 ```
-[User taps mic]
-      │  MediaRecorder captures audio/webm
-      ▼
-POST /transcribe ──► OpenAI Whisper ──► transcript text
-      ▼
-POST /parse-intent ──► OpenRouter LLM ──► {type, data}
-      │
-      ├─ type == "khata"  ──► UI confirm card ──► POST /log-transaction ──► new balance ──► "Saved!"
-      ├─ type == "invoice"──► UI: "coming soon" (NOT wired to /generate-invoice)
-      └─ type == "unknown"──► UI error: "Could not understand"
+explicit customer_id            -> use it
+else match name EXACTLY (case-insensitive):
+   exactly 1 match  -> use it
+   0 matches        -> create a NEW khata (auto-create workflow)
+   2+ matches       -> 409 {error:"ambiguous", candidates:[…]}  (caller MUST ask)
 ```
 
-## Ledger flow
-```
-[User opens Khata tab] ──► GET /ledger ──► render customer list with balances
-```
-(`GET /ledger/{name}` exists in the backend but the **UI never calls it** — there is no customer detail screen yet.)
+- **No partial/fuzzy auto-resolution.** "Udayveer Singh" never lands on "Udayveer".
+- **Never silently picks** among duplicates — the UI shows a chooser (name · phone · balance).
+- Fuzzy matching is available only via `/customers/search`, where the user picks explicitly.
 
 ---
 
-## Authentication & security
+## Primary voice flow
 
-**There is none.** Every endpoint is fully open:
+```
+[mic] → Web Speech transcript → review/edit
+     → matchCommand(text)                       (lib/commands.js)
+        ├─ createKhata <name>  → POST /customers → open that khata
+        ├─ openKhata  <name>   → resolve (exact) → open CustomerDetail (disambiguate if needed)
+        ├─ openInvoice <name>  → resolve → GET /customer/{id}/invoices → open newest
+        ├─ nav <tab>           → switch tab
+        └─ (no command) → POST /parse-intent
+              ├─ khata   → draft → resolve → POST /log-transaction
+              └─ invoice → InvoiceCreate → POST /generate-invoice
+```
 
-- No login, no API keys, no tokens, no sessions, no per-user/per-shop scoping.
-- Anyone who can reach the server can read the entire ledger, write transactions, generate invoices, and trigger WhatsApp messages.
-- `/transcribe`, `/parse-intent`, `/generate-invoice`, and `/send-reminder` proxy to **paid third-party APIs** with no rate limiting or auth — an open `/send-reminder` or `/transcribe` is an abuse/cost risk if exposed publicly.
-- This is acceptable for a single-user local prototype only. Before any real deployment, add authentication, per-shop data scoping, input validation/limits, and rate limiting. Tracked in [TODO.md](TODO.md).
+Voice commands **complete the action** (open the actual khata/invoice, save the
+entry) rather than only navigating to a page.
 
 ---
 
-## Integration touchpoints
+## Security notes (see [TODO.md](TODO.md))
 
-| Module | Service | Failure mode |
-|--------|---------|--------------|
-| `stt.py` | OpenAI Whisper | Returns `""`; UI shows "Could not understand" |
-| `intent_parser.py` | OpenRouter LLM | Returns `{"type":"unknown"}` |
-| `invoice_generator.py` | ReportLab (local) | Raises on bad input (no guard) |
-| `whatsapp.py` | Twilio | Returns `False`; never raises |
+- Real per-shop auth now exists (token), but: the token sits in invoice file URLs
+  (`?token=`), no rate limiting on paid-API routes, and `_auth_for_file`'s
+  `x_shop_token` param is read as a query value (only `?token=` is effective).
+- `@app.on_event("startup")` is deprecated (should move to `lifespan`).

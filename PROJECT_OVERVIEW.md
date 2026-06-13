@@ -1,8 +1,10 @@
 # BolKhaata — Project Overview
 
-**Tagline:** *Bol ke likho* — a voice-first *khata* (ledger) app for Indian kirana/small shop owners.
+**Tagline:** *आपका खाता, आपकी आवाज़* — a voice-first *khata* (ledger) app for Indian kirana/micro-vendors.
 
-A shopkeeper taps a mic, speaks an entry in Hindi/Kannada (often Romanized/code-mixed) like *"Ramesh ko 200 rupaye udhaar"*, and the app transcribes it, understands the intent, and records it in a customer ledger. It can also generate GST invoice PDFs and send WhatsApp payment reminders.
+A shopkeeper registers a shop, then records ledger entries by **speaking** (Hindi / Kannada / Hinglish) — e.g. *"Suresh ko 200 rupaye udhaar"*. The app transcribes the speech, parses the intent, resolves it to the right customer, and books a credit/payment. It also generates GST invoice PDFs/images and sends WhatsApp payment reminders.
+
+> Last updated to reflect the rebuild + voice-engine fixes (commits `fa096fc`, `83bac8d`).
 
 ---
 
@@ -10,13 +12,16 @@ A shopkeeper taps a mic, speaks an entry in Hindi/Kannada (often Romanized/code-
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 19 + Vite 8 (PWA-style SPA), plain CSS |
+| Frontend | React 19 + Vite 8 (PWA), trilingual UI, plain CSS |
 | Backend | FastAPI (Python 3.13), Uvicorn |
-| Database | SQLite (`bolkhaata.db`, local file) |
-| Speech-to-text | OpenAI Whisper (`whisper-1`) |
-| Intent parsing | LLM via OpenRouter (default `deepseek/deepseek-chat`) |
-| Invoices | ReportLab (PDF generation) |
-| Reminders | Twilio WhatsApp API |
+| Database | SQLite (`bolkhaata.db`, local file, gitignored) |
+| Auth | PIN (PBKDF2-HMAC-SHA256) + opaque shop token in `X-Shop-Token` header |
+| Speech-to-text | Browser Web Speech API (client) + optional OpenAI Whisper (server) |
+| Intent parsing | OpenRouter LLM with an offline regex/Hindi-number **fallback** |
+| Invoices | ReportLab (PDF) + Pillow/qrcode (JPG with UPI QR) |
+| Reminders | `wa.me` deep links (default) + optional Twilio WhatsApp |
+
+Every external integration is **optional** — with no API keys the app still works (on-device speech, heuristic parser, `wa.me` links).
 
 ---
 
@@ -24,77 +29,75 @@ A shopkeeper taps a mic, speaks an entry in Hindi/Kannada (often Romanized/code-
 
 ```
 BolKhaata/
-├── README.md
 ├── backend/
 │   ├── main.py               # FastAPI app + all routes
-│   ├── models.py             # Pydantic request/response models
-│   ├── database.py           # SQLite access layer + schema
-│   ├── intent_parser.py      # LLM call to classify transcript → khata/invoice
-│   ├── stt.py                # OpenAI Whisper transcription
-│   ├── invoice_generator.py  # ReportLab GST invoice PDF builder
-│   ├── whatsapp.py           # Twilio WhatsApp reminder sender
-│   ├── requirements.txt
-│   └── bolkhaata.db           # SQLite database (committed)
-└── frontend/
-    ├── index.html
-    ├── vite.config.js
-    ├── package.json
-    └── src/
-        ├── main.jsx          # React entry
-        ├── App.jsx           # Entire UI (voice + ledger tabs)
-        ├── App.css / index.css
-        └── assets/
+│   ├── auth.py               # PIN hashing + X-Shop-Token shop resolution
+│   ├── database.py           # SQLite schema, migrations, data access
+│   ├── models.py             # Pydantic request models
+│   ├── intent_parser.py      # LLM intent parse + offline heuristic fallback
+│   ├── stt.py                # OpenAI Whisper transcription (optional)
+│   ├── invoice_generator.py  # ReportLab GST invoice PDF
+│   ├── invoice_image.py      # Pillow JPG invoice (UPI QR)
+│   ├── whatsapp.py           # wa.me links + optional Twilio
+│   ├── test_resolution.py    # runnable tests (customer resolution rules)
+│   └── requirements.txt
+├── frontend/
+│   ├── index.html, vite.config.js, package.json
+│   ├── public/               # manifest.webmanifest, sw.js, icons
+│   └── src/
+│       ├── App.jsx           # shell: tabs, overlays, voice mount
+│       ├── api.js            # fetch client (token, error handling)
+│       ├── i18n.js           # hi / kn / en strings
+│       ├── components/       # VoiceAssistant, InvoicePreview, Icons, Toast
+│       ├── lib/              # commands (voice matcher), useSpeech, format, share
+│       └── screens/          # Onboarding, Home, Ledger, CustomerDetail,
+│                             #   Invoices, InvoiceCreate, Settings
+└── pwa/                       # SEPARATE standalone vanilla-JS PWA prototype
 ```
+
+> `pwa/` is an independent design prototype (vanilla HTML/CSS/JS) and is **not** part of the React app — see `pwa/README.md`.
 
 ---
 
 ## Frontend architecture
 
-- **Single-component SPA.** All UI logic lives in [`frontend/src/App.jsx`](frontend/src/App.jsx). There is no router, no state-management library, and no API-client module — `fetch` calls hit the backend at the hardcoded `const API = 'http://localhost:8000'`.
-- **Two tabs** driven by a `tab` state value, with a bottom navigation bar:
-  - **Voice** — the primary screen. A mic button drives a small state machine.
-  - **Khata (ledger)** — a read-only list of customers and their balances.
-- **Voice state machine** (`phase` state): `idle → recording → processing → confirm → success` (with `idle` on errors). Flow:
-  1. `startRecording` uses the browser `MediaRecorder` API to capture `audio/webm;codecs=opus`.
-  2. On stop, the blob is POSTed to `/transcribe`.
-  3. The returned transcript is POSTed to `/parse-intent`.
-  4. If intent is `khata`, the app shows a **confirm card**; on confirm it POSTs to `/log-transaction` and shows the new balance.
-  5. If intent is `invoice`, it shows *"invoice flow coming soon"* (not implemented in UI).
-- **Currency formatting** via `Intl.NumberFormat('en-IN', INR)`.
-- Built with React **StrictMode** ([`main.jsx`](frontend/src/main.jsx)).
+- **Shell** ([`App.jsx`](frontend/src/App.jsx)): holds `shop` (auth), the active `tab`, and an `overlay`/`voice` stack. Unauthenticated users see `Onboarding`; authenticated users get a bottom nav (Home · Khata · Bill · Settings) with a centre **mic** button.
+- **Screens** (in `src/screens/`): Home (dashboard + mic + type box), Ledger (customer list + search), CustomerDetail (history, add entry, settle, remind), Invoices (list, preview, delete), InvoiceCreate (line-item builder), Settings, Onboarding.
+- **Overlays**: CustomerDetail, InvoiceCreate, and a global **InvoicePreview** (so voice can open a specific invoice from anywhere).
+- **Voice pipeline** ([`VoiceAssistant.jsx`](frontend/src/components/VoiceAssistant.jsx)): record → review/edit transcript → route. Commands ([`lib/commands.js`](frontend/src/lib/commands.js)) are matched first (entity-aware actions); otherwise the transcript goes to the LLM/heuristic parser and becomes a khata or invoice draft. Duplicate-name matches force a disambiguation step.
+- **Speech** ([`lib/useSpeech.js`](frontend/src/lib/useSpeech.js)): Web Speech API wrapper that settles exactly once (no false "didn't catch that").
+- **i18n**: every label is `{hi, kn, en}`; language stored in `localStorage`.
+- **Client** ([`api.js`](frontend/src/api.js)): adds the `X-Shop-Token` header, clears auth on 401, base URL auto-targets `host:8000`.
 
 ## Backend architecture
 
-- **Flat FastAPI app.** [`backend/main.py`](backend/main.py) defines all routes directly; each external concern is isolated in its own module (`stt`, `intent_parser`, `invoice_generator`, `whatsapp`, `database`).
-- **Graceful degradation by design.** Every external integration (Whisper, OpenRouter, Twilio) returns an empty/`unknown`/`False` result instead of raising when its API key is missing or a call fails. The server therefore boots and serves requests even with **no API keys configured** — but voice and reminders silently do nothing.
-- **CORS** is locked to `http://localhost:5173` (the Vite dev origin).
-- **Config** is read from environment variables, loaded from `backend/.env` via `python-dotenv`. No `.env` is committed (it is gitignored).
-- **Persistence** is a single local SQLite file; the schema is created on startup via `database.init_db()`.
+- **Flat FastAPI app** ([`main.py`](backend/main.py)); each concern isolated in its own module.
+- **Auth** ([`auth.py`](backend/auth.py)): shops register with a PIN (stored as PBKDF2 hash) and receive an opaque token; `require_shop` resolves the token on every protected route. The token rotates on each login.
+- **Identity model**: everything is scoped to a `shop_id`. **Customers are first-class rows with integer ids; duplicate names are allowed.** Transactions/invoices reference `customer_id` (with the name denormalised for display).
+- **Resolution rules** (see [API_FLOW.md](API_FLOW.md)): names auto-resolve **exactly** only; ambiguity forces a choice; fuzzy matching exists only behind an explicit search.
+- **Graceful degradation**: missing keys → on-device fallbacks, never errors.
+
+See [DATABASE.md](DATABASE.md) for schema and [API_FLOW.md](API_FLOW.md) for endpoints, auth, and flows.
 
 ---
 
-## Request → response flows (summary)
+## Environment (`backend/.env`, all optional)
 
-| User action | Endpoints hit | External service |
-|-------------|---------------|------------------|
-| Speak an entry | `/transcribe` → `/parse-intent` → `/log-transaction` | OpenAI Whisper, OpenRouter LLM |
-| View ledger | `/ledger` | — |
-| Generate invoice | `/generate-invoice` (no UI yet) | ReportLab |
-| Send reminder | `/send-reminder` (no UI yet) | Twilio |
+| Variable | Used by | Unlocks |
+|----------|---------|---------|
+| `OPENROUTER_API_KEY` / `LLM_MODEL` | `intent_parser.py` | better intent parsing (else heuristic) |
+| `OPENAI_API_KEY` | `stt.py` | server Whisper STT (else browser speech) |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_WHATSAPP_FROM` | `whatsapp.py` | auto-send reminders (else `wa.me` link) |
+| `CORS_ORIGINS` | `main.py` | restrict origins (else localhost + LAN) |
 
-See [API_FLOW.md](API_FLOW.md) for details and [DATABASE.md](DATABASE.md) for the schema.
+## Run
 
----
+```bash
+# Backend
+cd backend && python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload            # http://localhost:8000
 
-## Required environment variables (`backend/.env`)
-
-| Variable | Used by | Required for |
-|----------|---------|--------------|
-| `OPENAI_API_KEY` | `stt.py` | Voice transcription |
-| `OPENROUTER_API_KEY` | `intent_parser.py` | Understanding the transcript |
-| `LLM_MODEL` | `intent_parser.py` | (optional) override default model |
-| `TWILIO_ACCOUNT_SID` | `whatsapp.py` | WhatsApp reminders |
-| `TWILIO_AUTH_TOKEN` | `whatsapp.py` | WhatsApp reminders |
-| `TWILIO_WHATSAPP_FROM` | `whatsapp.py` | (optional) sender number |
-
-> Without `OPENAI_API_KEY` **and** `OPENROUTER_API_KEY`, the voice flow cannot produce a transaction — and since the UI has no manual-entry form, the ledger cannot be populated through the app. See [TODO.md](TODO.md).
+# Frontend
+cd frontend && npm install && npm run dev   # http://localhost:5173
+```
