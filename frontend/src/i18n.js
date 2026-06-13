@@ -60,8 +60,13 @@ export const STR = {
   actionInvoice: { hi: 'बिल बनाएं', kn: 'ಬಿಲ್ ರಚಿಸಿ', en: 'Generate Invoice' },
   actionKhata: { hi: 'खाते में डालें', kn: 'ಖಾತೆಗೆ ಸೇರಿಸಿ', en: 'Add to Khata' },
   whichCustomer: { hi: 'कौन सा ग्राहक?', kn: 'ಯಾವ ಗ್ರಾಹಕ?', en: 'Which customer?' },
+  whichCustomerHint: { hi: 'सही ग्राहक चुनें', kn: 'ಸರಿಯಾದ ಗ್ರಾಹಕರನ್ನು ಆರಿಸಿ', en: 'pick the right one' },
   newCustomer: { hi: '+ नया ग्राहक बनाएं', kn: '+ ಹೊಸ ಗ್ರಾಹಕ', en: '+ New customer' },
+  noPhone: { hi: 'नंबर नहीं', kn: 'ಸಂಖ್ಯೆ ಇಲ್ಲ', en: 'no phone' },
   opened: { hi: 'खोल दिया', kn: 'ತೆರೆಯಲಾಗಿದೆ', en: 'Opened' },
+  customerNotFound: { hi: 'खाता नहीं मिला', kn: 'ಖಾತೆ ಸಿಗಲಿಲ್ಲ', en: 'no khata found' },
+  noInvoicesYet: { hi: 'कोई बिल नहीं है', kn: 'ಯಾವುದೇ ಬಿಲ್ ಇಲ್ಲ', en: 'no invoices yet' },
+  khataOpened: { hi: 'नया खाता खुल गया', kn: 'ಹೊಸ ಖಾತೆ ತೆರೆಯಲಾಗಿದೆ', en: 'new khata opened' },
 
   // confirm
   confirmEntry: { hi: 'सही है?', kn: 'ಸರಿಯೇ?', en: 'Confirm entry' },

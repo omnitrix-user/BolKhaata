@@ -89,7 +89,11 @@ export const api = {
   logTransaction: (entry) => request('/log-transaction', { method: 'POST', body: entry }),
   ledger: () => request('/ledger'),
   customer: (id) => request(`/customer/${id}`),
+  customerInvoices: (id) => request(`/customer/${id}/invoices`),
+  // EXACT-match candidates (for disambiguation). Never returns partial matches.
   resolveCustomers: (name) => request('/customers/resolve', { method: 'POST', body: { name } }),
+  // Fuzzy contains-search (for the search UI/command only).
+  searchCustomers: (name) => request('/customers/search', { method: 'POST', body: { name } }),
   createCustomer: (name, phone = '') =>
     request('/customers', { method: 'POST', body: { name, phone } }),
   deleteTransaction: (id) => request(`/transaction/${id}`, { method: 'DELETE' }),

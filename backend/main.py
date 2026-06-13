@@ -141,14 +141,38 @@ def customer_detail(customer_id: int, shop=Depends(auth.require_shop)):
     return data
 
 
+@app.get("/customer/{customer_id}/invoices")
+def customer_invoices(customer_id: int, shop=Depends(auth.require_shop)):
+    """Invoices for one customer, newest first. Powers 'open the last invoice of X'."""
+    if database.get_customer(shop["id"], customer_id) is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return {"invoices": database.list_invoices(shop["id"], customer_id)}
+
+
 @app.post("/customers/resolve")
 def resolve_customer(payload: CustomerCreate, shop=Depends(auth.require_shop)):
-    """Return all customers matching a name (for voice/typed disambiguation)."""
-    return {"matches": database.resolve_customers(shop["id"], payload.name)}
+    """EXACT-match candidates for a spoken name (drives disambiguation).
+
+    Returns 0, 1, or many — the client must force a choice when many, and must
+    never auto-pick. Partial matches are intentionally NOT returned here so that
+    'Udayveer' can never resolve to 'Udayveer Singh'.
+    """
+    return {"matches": database.resolve_exact(shop["id"], payload.name)}
+
+
+@app.post("/customers/search")
+def search_customer(payload: CustomerCreate, shop=Depends(auth.require_shop)):
+    """Fuzzy contains-search for the search UI/command (user picks explicitly)."""
+    return {"matches": database.search_customers(shop["id"], payload.name)}
 
 
 @app.post("/customers")
 def create_customer(payload: CustomerCreate, shop=Depends(auth.require_shop)):
+    """Always creates a NEW customer row, even if the name already exists.
+
+    Names are not unique identifiers — each khata gets its own id. This backs the
+    'open a new khata for Rahul' voice intent: never merges, never reuses.
+    """
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Name required.")
     return {"success": True, "customer": database.create_customer(
@@ -162,7 +186,17 @@ def set_phone(customer_id: int, payload: CustomerPhoneIn, shop=Depends(auth.requ
 
 
 def _resolve_customer(shop_id, customer_id, customer_name, phone, allow_create=True):
-    """Resolve to a single customer or raise 409 with candidates when ambiguous."""
+    """Resolve a transaction to ONE customer, by id or EXACT name.
+
+    Rules (see requirements #1 and #3):
+      * An explicit customer_id always wins (the client already disambiguated).
+      * Otherwise match the name EXACTLY (case-insensitive). No partial/fuzzy
+        matching — 'Udayveer Singh' never lands on 'Udayveer'.
+      * Exactly one exact match  -> use it.
+      * Zero exact matches       -> create a brand-new khata (current workflow).
+      * More than one exact match -> 409 'ambiguous' with candidates; the caller
+        MUST ask which one. Never silently pick.
+    """
     if customer_id:
         c = database.get_customer(shop_id, customer_id)
         if not c:
@@ -173,7 +207,7 @@ def _resolve_customer(shop_id, customer_id, customer_name, phone, allow_create=T
     name = (customer_name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Customer name required.")
-    matches = database.resolve_customers(shop_id, name)
+    matches = database.resolve_exact(shop_id, name)
     if len(matches) == 1:
         cid = matches[0]["id"]
         if phone:
@@ -223,7 +257,7 @@ def _link_invoice_customer(shop_id, customer_id, name):
     """Best-effort link an invoice to a customer (never blocks generation)."""
     if customer_id and database.get_customer(shop_id, customer_id):
         return customer_id
-    matches = database.resolve_customers(shop_id, name) if name else []
+    matches = database.resolve_exact(shop_id, name) if name else []
     if len(matches) == 1:
         return matches[0]["id"]
     if not matches and (name or "").strip():
@@ -306,7 +340,7 @@ def get_invoice(invoice_id: str, token: str | None = None, x_shop_token: str | N
 def reminder(payload: ReminderIn, shop=Depends(auth.require_shop)):
     phone = payload.phone
     if not phone and payload.customer_name:
-        matches = database.resolve_customers(shop["id"], payload.customer_name)
+        matches = database.resolve_exact(shop["id"], payload.customer_name)
         if len(matches) == 1:
             phone = matches[0]["phone"]
     message = whatsapp.reminder_message(shop["name"], payload.customer_name, payload.amount)

@@ -274,34 +274,55 @@ def get_customer(shop_id: int, customer_id: int):
     return dict(row) if row else None
 
 
-def resolve_customers(shop_id: int, name: str):
-    """Return customers matching a (possibly partial) spoken name, with balances.
+_RESOLVE_SELECT = f"""
+    SELECT c.id, c.name, c.phone, {_signed_sql()} AS balance,
+           MAX(t.created_at) AS last_at
+    FROM customers c LEFT JOIN transactions t ON t.customer_id = c.id
+    WHERE c.shop_id = ? AND {{cond}}
+    GROUP BY c.id ORDER BY last_at DESC
+"""
 
-    Exact case-insensitive match first; if none, a contains-match either way so
-    'Rahul' finds 'Rahul Sharma'. Used for voice/typed disambiguation.
+
+def _rows_to_customers(rows):
+    return [{"id": r["id"], "name": r["name"], "phone": r["phone"] or "",
+             "balance": round(r["balance"], 2)} for r in rows]
+
+
+def resolve_exact(shop_id: int, name: str):
+    """Customers whose name is an EXACT (case-insensitive) match, with balances.
+
+    This is the ONLY function used to auto-resolve a spoken/typed name to a ledger
+    for transactions and for opening a khata/invoice. Partial matches are
+    deliberately excluded: 'Udayveer' must never resolve to 'Udayveer Singh', and
+    names are not unique — multiple exact matches return multiple candidates so the
+    caller can force disambiguation. Never silently collapses different identities.
     """
     name = (name or "").strip()
     if not name:
         return []
     conn = get_connection()
-    cur = conn.cursor()
-    base = f"""
-        SELECT c.id, c.name, c.phone, {_signed_sql()} AS balance,
-               MAX(t.created_at) AS last_at
-        FROM customers c LEFT JOIN transactions t ON t.customer_id = c.id
-        WHERE c.shop_id = ? AND {{cond}}
-        GROUP BY c.id ORDER BY last_at DESC
-    """
-    rows = cur.execute(base.format(cond="LOWER(c.name) = LOWER(?)"), (shop_id, name)).fetchall()
-    if not rows:
-        like = f"%{name.lower()}%"
-        rows = cur.execute(
-            base.format(cond="(LOWER(c.name) LIKE ? OR LOWER(?) LIKE '%' || LOWER(c.name) || '%')"),
-            (shop_id, like, name),
-        ).fetchall()
+    rows = conn.execute(
+        _RESOLVE_SELECT.format(cond="LOWER(c.name) = LOWER(?)"), (shop_id, name)
+    ).fetchall()
     conn.close()
-    return [{"id": r["id"], "name": r["name"], "phone": r["phone"] or "",
-             "balance": round(r["balance"], 2)} for r in rows]
+    return _rows_to_customers(rows)
+
+
+def search_customers(shop_id: int, query: str):
+    """Fuzzy contains-match for the *search* feature only (never auto-resolves).
+
+    Safe to be loose here because the user always picks a result explicitly.
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+    conn = get_connection()
+    like = f"%{query.lower()}%"
+    rows = conn.execute(
+        _RESOLVE_SELECT.format(cond="LOWER(c.name) LIKE ?"), (shop_id, like)
+    ).fetchall()
+    conn.close()
+    return _rows_to_customers(rows)
 
 
 def set_customer_phone(shop_id: int, customer_id: int, phone: str) -> None:
@@ -439,15 +460,25 @@ def save_invoice(shop_id, customer_id, invoice_id, customer_name, items_json, to
     conn.close()
 
 
-def list_invoices(shop_id: int):
+def list_invoices(shop_id: int, customer_id: int = None):
+    """Invoices for a shop, newest first. Optionally scoped to one customer_id
+    (used by the voice command 'open the last invoice of X')."""
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute(
-        "SELECT invoice_id, customer_name, items_json, total, date, created_at "
-        "FROM invoices WHERE shop_id = ? ORDER BY id DESC",
-        (shop_id,),
-    )
-    out = [{"invoice_id": r["invoice_id"], "customer_name": r["customer_name"],
+    if customer_id is None:
+        cur.execute(
+            "SELECT invoice_id, customer_id, customer_name, items_json, total, date, created_at "
+            "FROM invoices WHERE shop_id = ? ORDER BY id DESC",
+            (shop_id,),
+        )
+    else:
+        cur.execute(
+            "SELECT invoice_id, customer_id, customer_name, items_json, total, date, created_at "
+            "FROM invoices WHERE shop_id = ? AND customer_id = ? ORDER BY id DESC",
+            (shop_id, customer_id),
+        )
+    out = [{"invoice_id": r["invoice_id"], "customer_id": r["customer_id"],
+            "customer_name": r["customer_name"],
             "items": json.loads(r["items_json"] or "[]"), "total": r["total"],
             "date": r["date"] or r["created_at"]} for r in cur.fetchall()]
     conn.close()

@@ -18,6 +18,10 @@ export default function VoiceAssistant({ lang, prefill, nav, onClose, onLogged }
   const [parsed, setParsed] = useState(null)
   const [draft, setDraft] = useState(null)
   const [candidates, setCandidates] = useState([])
+  // After disambiguation we run this with the chosen customer. Lets one
+  // disambig screen serve "add to khata", "open khata" and "open invoice".
+  const [pendingAction, setPendingAction] = useState(null)
+  const [disambigName, setDisambigName] = useState('')
 
   const { supported, recording, interim, start, stop } = useSpeech({
     lang: SPEECH_LANG[lang] || 'hi-IN',
@@ -35,15 +39,86 @@ export default function VoiceAssistant({ lang, prefill, nav, onClose, onLogged }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // --- Customer resolution + action execution -------------------------------
+  // EXACT-match only (api.resolveCustomers never returns partials). One match ->
+  // run the action; many -> mandatory disambiguation; none -> create (for add /
+  // new-khata) or report "not found" (for open commands). Never silently picks.
+  const resolveAndRun = async (name, action, { createOnNone = false, notFoundKey = 'customerNotFound' } = {}) => {
+    const clean = (name || '').trim()
+    if (!clean) { toast(tr('unknownCustomer'), 'error'); setPhase('review'); return }
+    setPhase('busy')
+    try {
+      const { matches } = await api.resolveCustomers(clean)
+      if (matches.length === 1) return action(matches[0])
+      if (matches.length > 1) {
+        setCandidates(matches)
+        setDisambigName(clean)
+        setPendingAction(() => action) // store the fn itself
+        setPhase('disambig')
+        return
+      }
+      if (createOnNone) {
+        const r = await api.createCustomer(clean, draft?.phone || '')
+        return action({ id: r.customer.id, name: r.customer.name, phone: '', balance: 0 })
+      }
+      toast(`${clean} — ${tr(notFoundKey)}`, 'error')
+      setPhase('review')
+    } catch {
+      toast(tr('somethingWrong'), 'error')
+      setPhase('review')
+    }
+  }
+
+  // Action executors — each receives a fully-resolved customer.
+  const openKhataFor = (c) => { onClose(); nav.openCustomer(c.id) }
+
+  const openLastInvoiceFor = async (c) => {
+    setPhase('busy')
+    try {
+      const { invoices } = await api.customerInvoices(c.id)
+      if (!invoices || invoices.length === 0) {
+        toast(`${c.name} — ${tr('noInvoicesYet')}`, 'error')
+        setPhase('review')
+        return
+      }
+      onClose()
+      nav.openInvoice(invoices[0]) // newest first
+    } catch {
+      toast(tr('somethingWrong'), 'error')
+      setPhase('review')
+    }
+  }
+
+  const logKhataFor = (c) => logWith({ customer_id: c.id, customer_name: c.name })
+
+  // "Open a new khata for X" — always a fresh ledger, even if X already exists.
+  const createKhataAndOpen = async (name) => {
+    const clean = (name || '').trim()
+    if (!clean) { toast(tr('unknownCustomer'), 'error'); setPhase('review'); return }
+    setPhase('busy')
+    try {
+      const r = await api.createCustomer(clean)
+      toast(`${r.customer.name} — ${tr('khataOpened')}`)
+      onLogged?.()
+      onClose()
+      nav.openCustomer(r.customer.id)
+    } catch {
+      toast(tr('somethingWrong'), 'error')
+      setPhase('review')
+    }
+  }
+
+  // --- Command routing: actions first, then transaction/invoice parsing -----
   const route = async (text) => {
     const trimmed = (text || '').trim()
     if (!trimmed) return toast(tr('notUnderstood'), 'error')
+
     const cmd = matchCommand(trimmed)
-    if (cmd?.type === 'nav') {
-      nav.go(cmd.tab)
-      toast(tr('opened'))
-      return onClose()
-    }
+    if (cmd?.type === 'nav') { nav.go(cmd.tab); toast(tr('opened')); return onClose() }
+    if (cmd?.type === 'createKhata') return createKhataAndOpen(cmd.name)
+    if (cmd?.type === 'openKhata') return resolveAndRun(cmd.name, openKhataFor)
+    if (cmd?.type === 'openInvoice') return resolveAndRun(cmd.name, openLastInvoiceFor)
+
     setPhase('busy')
     try {
       const res = await api.parseIntent(trimmed)
@@ -104,26 +179,23 @@ export default function VoiceAssistant({ lang, prefill, nav, onClose, onLogged }
     }
   }
 
-  const submitKhata = async () => {
+  const submitKhata = () => {
     if (!draft.customer_name.trim()) return toast(tr('unknownCustomer'), 'error')
     if (!draft.amount || Number(draft.amount) <= 0) return toast(tr('amount') + ' ' + tr('required'), 'error')
-    setPhase('busy')
-    try {
-      const { matches } = await api.resolveCustomers(draft.customer_name.trim())
-      if (matches.length > 1) { setCandidates(matches); setPhase('disambig') }
-      else if (matches.length === 1) logWith({ customer_id: matches[0].id })
-      else logWith({ customer_name: draft.customer_name.trim() }) // backend creates
-    } catch {
-      toast(tr('somethingWrong'), 'error')
-      setPhase('khata')
-    }
+    // Exact resolution: 1 -> log; many -> disambiguate; none -> create new khata.
+    resolveAndRun(draft.customer_name.trim(), logKhataFor, { createOnNone: true })
   }
 
+  // "New customer" on the disambiguation screen: force a brand-new duplicate
+  // khata, then continue whatever action was pending (log / open).
   const pickNew = async () => {
     setPhase('busy')
     try {
-      const r = await api.createCustomer(draft.customer_name.trim(), draft.phone || '')
-      logWith({ customer_id: r.customer.id })
+      const name = (disambigName || draft?.customer_name || '').trim()
+      const r = await api.createCustomer(name, draft?.phone || '')
+      const c = { id: r.customer.id, name: r.customer.name, phone: '', balance: 0 }
+      if (pendingAction) pendingAction(c)
+      else logWith({ customer_id: c.id, customer_name: c.name })
     } catch {
       toast(tr('somethingWrong'), 'error')
       setPhase('disambig')
@@ -214,15 +286,18 @@ export default function VoiceAssistant({ lang, prefill, nav, onClose, onLogged }
           <div className="card confirm-card">
             <p className="confirm-head dev">{tr('whichCustomer')}</p>
             <p className="mic-hint dev" style={{ margin: '0 0 .8rem' }}>
-              {candidates.length} · {draft.customer_name}
+              {candidates.length} × “{disambigName}” — {tr('whichCustomerHint')}
             </p>
             <ul className="list">
               {candidates.map((c) => (
                 <li key={c.id}>
-                  <button className="row" onClick={() => logWith({ customer_id: c.id })}>
+                  <button
+                    className="row"
+                    onClick={() => (pendingAction ? pendingAction(c) : logWith({ customer_id: c.id, customer_name: c.name }))}
+                  >
                     <span className="row-main">
                       <span className="row-title">{c.name}</span>
-                      <span className="row-sub dev">{c.phone || '—'}</span>
+                      <span className="row-sub dev">{c.phone || tr('noPhone')}</span>
                     </span>
                     <b className="num" style={{ color: c.balance < 0 ? 'var(--red)' : 'var(--green)' }}>{formatRupee(c.balance)}</b>
                   </button>

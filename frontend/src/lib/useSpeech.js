@@ -11,6 +11,8 @@ export function useSpeech({ lang = 'hi-IN', onResult, onError }) {
   const recRef = useRef(null)
   const finalRef = useRef('')
   const gotResultRef = useRef(false)
+  const settledRef = useRef(false) // exactly one of onResult/onError per session
+  const abortingRef = useRef(false) // true when WE stop on purpose (close/unmount)
 
   const stop = useCallback(() => {
     try { recRef.current?.stop() } catch { /* noop */ }
@@ -25,7 +27,18 @@ export function useSpeech({ lang = 'hi-IN', onResult, onError }) {
     rec.maxAlternatives = 1
     finalRef.current = ''
     gotResultRef.current = false
+    settledRef.current = false
+    abortingRef.current = false
     setInterim('')
+
+    // Settle this recognition session exactly once. Prevents the classic bug
+    // where a successful command is followed by a spurious "didn't catch that"
+    // when onend/onerror fire after we've already delivered the result.
+    const settle = (fn, arg) => {
+      if (settledRef.current) return
+      settledRef.current = true
+      fn?.(arg)
+    }
 
     rec.onresult = (e) => {
       let interimText = ''
@@ -39,19 +52,23 @@ export function useSpeech({ lang = 'hi-IN', onResult, onError }) {
     rec.onerror = (e) => {
       setRecording(false)
       const err = e.error
-      if (err === 'not-allowed') onError?.('micDenied')
-      else if (err === 'no-speech') onError?.('noAudio')
+      // Deliberate stop (component closing) OR a result already arrived ->
+      // never surface an error. 'aborted' is fired by our own abort().
+      if (err === 'aborted' || abortingRef.current || gotResultRef.current) return
+      if (err === 'not-allowed') settle(onError, 'micDenied')
+      else if (err === 'no-speech') settle(onError, 'noAudio')
       // Brave & some browsers disable the Google speech backend -> network /
       // service-not-allowed / audio-capture. Treat as "voice unavailable here".
-      else if (err === 'network' || err === 'service-not-allowed' || err === 'audio-capture') onError?.('micUnsupported')
-      else onError?.('notUnderstood')
+      else if (err === 'network' || err === 'service-not-allowed' || err === 'audio-capture') settle(onError, 'micUnsupported')
+      else settle(onError, 'notUnderstood')
     }
     rec.onend = () => {
       setRecording(false)
       setInterim('')
       const text = finalRef.current.trim()
-      if (text) onResult?.(text)
-      else if (!gotResultRef.current) onError?.('notUnderstood')
+      if (text) settle(onResult, text)
+      // Only complain when nothing was heard AND we didn't stop on purpose.
+      else if (!gotResultRef.current && !abortingRef.current) settle(onError, 'notUnderstood')
     }
 
     recRef.current = rec
@@ -60,11 +77,14 @@ export function useSpeech({ lang = 'hi-IN', onResult, onError }) {
       setRecording(true)
     } catch {
       setRecording(false)
-      onError?.('notUnderstood')
+      settle(onError, 'notUnderstood')
     }
   }, [lang, onResult, onError])
 
-  useEffect(() => () => { try { recRef.current?.abort() } catch { /* noop */ } }, [])
+  useEffect(() => () => {
+    abortingRef.current = true
+    try { recRef.current?.abort() } catch { /* noop */ }
+  }, [])
 
   return { supported: !!SR, recording, interim, start, stop }
 }

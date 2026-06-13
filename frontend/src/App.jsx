@@ -6,6 +6,7 @@ import { t } from './i18n'
 import { Book, Gear, Home as HomeIcon, Receipt, Mic } from './components/Icons'
 import { ToastProvider } from './components/Toast'
 import VoiceAssistant from './components/VoiceAssistant'
+import InvoicePreview from './components/InvoicePreview'
 import Onboarding from './screens/Onboarding'
 import HomeScreen from './screens/Home'
 import Ledger from './screens/Ledger'
@@ -48,6 +49,7 @@ function App() {
   const nav = {
     openCustomer: (id) => setOverlay({ type: 'customer', id }),
     openInvoiceCreate: (prefill) => setOverlay({ type: 'invoiceCreate', prefill }),
+    openInvoice: (inv) => setOverlay({ type: 'invoiceView', inv }),
     openVoice: (prefill = '') => setVoice({ prefill }),
     refresh: () => setRefreshNonce((n) => n + 1),
     close: () => setOverlay(null),
@@ -90,6 +92,9 @@ function App() {
           )}
           {overlay?.type === 'invoiceCreate' && (
             <InvoiceCreate lang={lang} prefill={overlay.prefill} nav={nav} />
+          )}
+          {overlay?.type === 'invoiceView' && (
+            <InvoicePreview lang={lang} inv={overlay.inv} onClose={nav.close} />
           )}
         </main>
 
