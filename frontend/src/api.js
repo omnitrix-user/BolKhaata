@@ -2,9 +2,12 @@
 // at the FastAPI server on port 8000 (same host the app is served from, so it
 // also works when the PWA is opened from a phone on the same wifi).
 
-const BASE =
+// VITE_API_URL is baked in at build time (set it in Netlify, then redeploy).
+// Trailing slash stripped so `${BASE}/auth/login` never becomes a double slash.
+const BASE = (
   import.meta.env.VITE_API_URL ||
   `${window.location.protocol}//${window.location.hostname}:8000`
+).replace(/\/+$/, '')
 
 const TOKEN_KEY = 'bk_token'
 const SHOP_KEY = 'bk_shop'
