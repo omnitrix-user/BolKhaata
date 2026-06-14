@@ -16,6 +16,7 @@ export default function InvoiceCreate({ lang, prefill, nav }) {
   const isStreet = shop.business_type === 'street_vendor'
   const defGst = isStreet ? 0 : (shop.gst_rate ?? 5)
   const [customer, setCustomer] = useState(prefill?.customer_name || '')
+  const [phone, setPhone] = useState(prefill?.phone || '')
   const [items, setItems] = useState(
     prefill?.items?.length
       ? prefill.items.map((i) => ({ ...i, rate: i.rate || '', gst: isStreet ? 0 : (i.gst ?? defGst) }))
@@ -24,6 +25,14 @@ export default function InvoiceCreate({ lang, prefill, nav }) {
   const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [sharing, setSharing] = useState(false)
+
+  // Guard the share action so a double-click can't open two WhatsApp tabs.
+  const onShare = async () => {
+    if (sharing) return
+    setSharing(true)
+    try { await shareInvoice(created, auth.shop) } finally { setSharing(false) }
+  }
 
   const totals = useMemo(() => {
     let taxable = 0, gst = 0
@@ -51,7 +60,8 @@ export default function InvoiceCreate({ lang, prefill, nav }) {
     setBusy(true)
     try {
       const r = await api.generateInvoice({
-        customer_id: prefill?.customer_id, customer_name: customer.trim(), items: clean,
+        customer_id: prefill?.customer_id, customer_name: customer.trim(),
+        phone: phone.trim() || null, items: clean,
       })
       setCreated({ invoice_id: r.invoice_id, customer_name: customer.trim(), total: r.total, items: clean })
       nav.refresh?.()
@@ -76,7 +86,7 @@ export default function InvoiceCreate({ lang, prefill, nav }) {
           <p className="success-line"><b>{created.customer_name}</b></p>
           <b className="num" style={{ fontSize: 32, color: 'var(--saffron)' }}>{formatRupee(created.total)}</b>
           <div className="success-actions">
-            <button className="btn btn--wa" onClick={() => shareInvoice(created, auth.shop)}>
+            <button className="btn btn--wa" onClick={onShare} disabled={sharing}>
               <WhatsApp /> {tr('shareWhatsApp')}
             </button>
             <button className="btn btn--ghost btn--block" onClick={() => setShowPreview(true)}>
@@ -101,6 +111,13 @@ export default function InvoiceCreate({ lang, prefill, nav }) {
       <label className="field">
         <span className="field-label dev">{tr('customer')}</span>
         <input className="field-input" value={customer} onChange={(e) => setCustomer(e.target.value)} autoFocus />
+      </label>
+
+      <label className="field">
+        <span className="field-label dev">{tr('phone')} ({tr('optional')})</span>
+        <input className="field-input num" type="tel" inputMode="numeric" value={phone}
+          onChange={(e) => setPhone(e.target.value)} placeholder="—" />
+        <small className="dev muted" style={{ marginTop: '.3rem' }}>{tr('phoneDupHint')}</small>
       </label>
 
       <div className="inv-items">

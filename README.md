@@ -166,14 +166,22 @@ your machine's API with no extra config.
 
 ## Configuration
 
-All keys live in `backend/.env` and are **optional** (see [`backend/.env.example`](backend/.env.example)):
+All config lives in `backend/.env` and is **optional** (see [`backend/.env.example`](backend/.env.example)):
 
 | Variable | Unlocks | Without it |
 |----------|---------|------------|
-| `OPENROUTER_API_KEY`, `LLM_MODEL` | Best Hindi/Kannada/Hinglish intent parsing | Built-in offline heuristic parser |
+| `USE_OLLAMA`, `OLLAMA_URL`, `OLLAMA_MODEL` | **Local** LLM intent parsing — free, private, offline, no API key | Falls through to OpenRouter / heuristic |
+| `OPENROUTER_API_KEY`, `LLM_MODEL` | Hosted LLM intent parsing (fallback) | Built-in offline heuristic parser |
 | `OPENAI_API_KEY` | Server-side Whisper STT | Browser Web Speech API (default) |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM` | Auto-send WhatsApp reminders | Free `wa.me` deep links |
 | `CORS_ORIGINS` | Restrict allowed origins (comma-separated) | localhost + LAN IPs allowed |
+
+**Intent parsing resolves in order:** local **Ollama** → **OpenRouter** (if a key is set) →
+built-in **heuristic**. Each step falls through on failure, so the app always parses
+something — even with no model and no network.
+
+> **Recommended (no API keys):** install [Ollama](https://ollama.com), then
+> `ollama pull qwen2.5:1.5b` — the `.env.example` defaults pick it up automatically.
 
 > **Speech-to-text** uses the browser's built-in Web Speech API by default (no key, best on
 > Android Chrome). Browsers without it fall back to the "type instead" box.

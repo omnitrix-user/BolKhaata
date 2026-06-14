@@ -134,6 +134,12 @@ export const STR = {
   loading: { hi: 'लोड हो रहा है…', kn: 'ಲೋಡ್ ಆಗುತ್ತಿದೆ…', en: 'Loading…' },
   somethingWrong: { hi: 'कुछ गड़बड़ हुई', kn: 'ಏನೋ ತಪ್ಪಾಯಿತು', en: 'Something went wrong' },
   required: { hi: 'ज़रूरी है', kn: 'ಅಗತ್ಯ', en: 'required' },
+  optional: { hi: 'वैकल्पिक', kn: 'ಐಚ್ಛಿಕ', en: 'optional' },
+  phoneDupHint: {
+    hi: 'एक ही नाम वाले ग्राहकों को अलग पहचानने में मदद करता है',
+    kn: 'ಒಂದೇ ಹೆಸರಿನ ಗ್ರಾಹಕರನ್ನು ಬೇರ್ಪಡಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತದೆ',
+    en: 'Helps tell apart customers with the same name',
+  },
 }
 
 export function t(lang, key) {

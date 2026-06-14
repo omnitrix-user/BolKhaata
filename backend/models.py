@@ -74,6 +74,7 @@ class Invoice(BaseModel):
     invoice_id: Optional[str] = None
     customer_id: Optional[int] = None
     customer_name: str
+    phone: Optional[str] = None
     items: List[InvoiceItem] = []
     total: Optional[float] = None
     date: Optional[str] = None

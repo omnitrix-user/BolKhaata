@@ -70,7 +70,6 @@ export function matchCommand(text) {
   const isInvoice = has('invoice', t)
   const isKhata = has('khata', t)
   const isNew = has('neu', t)
-  const isLast = has('last', t)
   const isVerb = has('verb', t)
 
   // 1. Create a brand-new khata — highest priority. "naya khata kholo Rahul",
@@ -83,7 +82,7 @@ export function matchCommand(text) {
   // 2. Open an invoice (the latest one for a named customer).
   if (isInvoice) {
     const name = extractName(raw, ['verb', 'invoice', 'last'])
-    if (name) return { type: 'openInvoice', name, which: isLast ? 'last' : 'last' }
+    if (name) return { type: 'openInvoice', name, which: 'last' }
     if (isVerb) return { type: 'nav', tab: 'invoices' } // bare "show invoices"
     return null
   }

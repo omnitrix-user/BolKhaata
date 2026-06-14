@@ -137,11 +137,10 @@ export default function VoiceAssistant({ lang, prefill, nav, onClose, onLogged }
 
   const chooseInvoice = () => {
     const d = parsed.data || {}
-    const prefillInv = parsed.type === 'invoice'
-      ? { items: d.items, customer_name: d.customer_name }
-      : { customer_name: d.customer_name }
+    // Forward any parsed line-items (and a spoken phone) regardless of the
+    // classified type, so spoken items aren't lost when the user picks Invoice.
     onClose()
-    nav.openInvoiceCreate(prefillInv)
+    nav.openInvoiceCreate({ customer_name: d.customer_name || '', items: d.items || [], phone: d.phone || null })
   }
 
   const chooseKhata = () => {

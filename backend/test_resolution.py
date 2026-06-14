@@ -19,6 +19,7 @@ import tempfile
 from fastapi import HTTPException
 
 import database as db
+import intent_parser
 import main
 
 
@@ -133,6 +134,75 @@ def test_open_last_invoice():
     check("newest invoice is first (INV002)", invs[0]["invoice_id"] == "INV002")
 
 
+def test_invoice_phone_link():
+    print("\n[7] Invoice -> customer link uses phone to break duplicate-name ties")
+    shop = _shop()
+    r1 = db.create_customer(shop, "Rahul", "9991112222")["id"]
+    r2 = db.create_customer(shop, "Rahul", "9993334444")["id"]
+
+    # No phone + duplicate name -> ambiguous -> store name only (None).
+    check("ambiguous 'Rahul' without phone -> no link", main._link_invoice_customer(shop, None, "Rahul", None) is None)
+    # Phone picks the exact duplicate.
+    check("phone disambiguates to the right Rahul", main._link_invoice_customer(shop, None, "Rahul", "9993334444") == r2)
+    check("other Rahul not chosen", main._link_invoice_customer(shop, None, "Rahul", "9991112222") == r1)
+
+    # Unique name -> links and backfills a missing phone.
+    s = db.create_customer(shop, "Suresh")["id"]
+    linked = main._link_invoice_customer(shop, None, "Suresh", "9990001111")
+    check("unique name links to its id", linked == s)
+    check("missing phone is backfilled", db.get_customer(shop, s)["phone"] == "9990001111")
+
+    # Unknown name -> creates a new customer carrying the phone.
+    new_id = main._link_invoice_customer(shop, None, "Naya Grahak", "9998887777")
+    created = db.get_customer(shop, new_id)
+    check("unknown name creates new customer", created is not None and created["name"] == "Naya Grahak")
+    check("new customer keeps the spoken phone", created["phone"] == "9998887777")
+
+
+def test_heuristic_full_name_and_invoice():
+    print("\n[8] Offline heuristic: full names + invoice line-items")
+    # Full name (given + surname) is kept, not truncated to the first token.
+    khata = intent_parser._heuristic("Suresh Kumar ko 200 udhaar")
+    check("full name captured ('Suresh Kumar')", khata["data"]["customer_name"] == "Suresh Kumar")
+    check("amount parsed (200)", khata["data"]["amount"] == 200)
+
+    # Bill keyword -> invoice with parsed items (offline, no LLM key).
+    inv = intent_parser._heuristic("Rahul ka bill, 3 kilo chawal 40, 2 packet cheeni 50")
+    check("bill phrase -> type invoice", inv["type"] == "invoice")
+    items = inv["data"]["items"]
+    check("two line-items parsed", len(items) == 2)
+    check("first item qty/rate (3 @ 40)", items[0]["qty"] == 3 and items[0]["rate"] == 40)
+    check("customer not captured as an item", all(it["name"].lower() != "rahul" for it in items))
+
+    # Natural English purchase, no 'bill' keyword: 'in 200' is the LINE TOTAL so
+    # rate = 200/2 = 100 (qty*rate must equal the spoken total).
+    eng = intent_parser._heuristic("Rahul bought 2kg of flour in 200 rupees")
+    check("purchase verb -> type invoice", eng["type"] == "invoice")
+    check("customer is 'Rahul'", eng["data"]["customer_name"] == "Rahul")
+    fit = eng["data"]["items"][0]
+    check("item name is 'Flour'", fit["name"] == "Flour")
+    check("qty 2, rate 100 (total 200)", fit["qty"] == 2 and fit["rate"] == 100 and fit["qty"] * fit["rate"] == 200)
+
+    # Trailing customer ('... for Imran') is the customer, not an item.
+    trail = intent_parser._heuristic("2 packets of biscuits at 30 each for Imran")
+    check("trailing 'for X' is the customer", trail["data"]["customer_name"] == "Imran")
+    check("per-unit rate kept (30)", trail["data"]["items"][0]["rate"] == 30)
+    check("trailing name not an item", all(it["name"].lower() != "imran" for it in trail["data"]["items"]))
+
+
+def test_parse_intent_offline():
+    print("\n[9] parse_intent falls back to the heuristic with no LLM available")
+    os.environ["USE_OLLAMA"] = "0"            # don't touch the network
+    os.environ.pop("OPENROUTER_API_KEY", None)
+    r = intent_parser.parse_intent("Rahul bought 2kg of flour in 200 rupees")
+    check("offline parse -> invoice", r["type"] == "invoice")
+    it = r["data"]["items"][0]
+    check("offline item math (2 x 100 = 200)", it["qty"] * it["rate"] == 200)
+    k = intent_parser.parse_intent("Suresh Kumar ko 200 udhaar")
+    check("offline khata keeps full name", k["type"] == "khata" and k["data"]["customer_name"] == "Suresh Kumar")
+    os.environ.pop("USE_OLLAMA", None)
+
+
 def main_run():
     for fn in (
         test_udayveer_vs_udayveer_singh,
@@ -141,6 +211,9 @@ def main_run():
         test_balances_isolated_by_id,
         test_add_transaction_by_id,
         test_open_last_invoice,
+        test_invoice_phone_link,
+        test_heuristic_full_name_and_invoice,
+        test_parse_intent_offline,
     ):
         _fresh_db()
         fn()

@@ -10,6 +10,13 @@ export default function InvoicePreview({ lang, inv, onClose }) {
   const tr = (k) => t(lang, k)
   const toast = useToast()
   const [loaded, setLoaded] = useState(false)
+  const [sharing, setSharing] = useState(false)
+
+  const onShare = async () => {
+    if (sharing) return
+    setSharing(true)
+    try { await shareInvoice(inv, auth.shop) } finally { setSharing(false) }
+  }
 
   return (
     <div className="screen overlay preview-overlay" style={{ zIndex: 50 }}>
@@ -31,7 +38,7 @@ export default function InvoicePreview({ lang, inv, onClose }) {
       </div>
 
       <div className="preview-actions">
-        <button className="btn btn--wa" onClick={() => shareInvoice(inv, auth.shop)}>
+        <button className="btn btn--wa" onClick={onShare} disabled={sharing}>
           <WhatsApp /> {tr('shareWhatsApp')}
         </button>
         <button

@@ -253,16 +253,37 @@ def _shop_info(shop):
     }
 
 
-def _link_invoice_customer(shop_id, customer_id, name):
-    """Best-effort link an invoice to a customer (never blocks generation)."""
-    if customer_id and database.get_customer(shop_id, customer_id):
-        return customer_id
+def _link_invoice_customer(shop_id, customer_id, name, phone=None):
+    """Best-effort link an invoice to a concrete customer id (never blocks
+    generation). A phone, when given, both fills a missing number on the resolved
+    customer and breaks a duplicate-name tie so the invoice is searchable/openable.
+    """
+    phone = (phone or "").strip() or None
+
+    def _backfill_phone(cid, existing):
+        if phone and not (existing or ""):
+            database.set_customer_phone(shop_id, cid, phone)
+
+    if customer_id:
+        c = database.get_customer(shop_id, customer_id)
+        if c:
+            _backfill_phone(customer_id, c.get("phone"))
+            return customer_id
+
+    name = (name or "").strip()
     matches = database.resolve_exact(shop_id, name) if name else []
     if len(matches) == 1:
+        _backfill_phone(matches[0]["id"], matches[0].get("phone"))
         return matches[0]["id"]
-    if not matches and (name or "").strip():
-        return database.create_customer(shop_id, name.strip())["id"]
-    return None  # ambiguous — store name only
+    if len(matches) > 1:
+        if phone:  # disambiguate duplicates by phone
+            for m in matches:
+                if (m.get("phone") or "") == phone:
+                    return m["id"]
+        return None  # still ambiguous — store name only
+    if name:  # no match — create a fresh customer (with phone if spoken)
+        return database.create_customer(shop_id, name, phone or "")["id"]
+    return None
 
 
 @app.post("/generate-invoice")
@@ -275,7 +296,7 @@ def generate_invoice(invoice: Invoice, shop=Depends(auth.require_shop)):
     if not data.get("date"):
         data["date"] = datetime.now().strftime("%d %b %Y")
     generate_invoice_image(data, info)  # writes <id>.jpg alongside the PDF
-    cid = _link_invoice_customer(shop["id"], data.get("customer_id"), data["customer_name"])
+    cid = _link_invoice_customer(shop["id"], data.get("customer_id"), data["customer_name"], data.get("phone"))
     database.save_invoice(
         shop["id"], cid, invoice_id, data["customer_name"],
         json.dumps(data.get("items", [])), total, data["date"], pdf_path,

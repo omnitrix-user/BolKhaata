@@ -21,8 +21,9 @@ function invoiceMessage(inv, shop, withLink = false) {
 
 // Share the invoice as an IMAGE. Web Share API attaches the real JPG (Android/
 // iOS, the actual target devices) with no link. Where files can't be shared
-// (most desktops), we auto-download the JPG so the user can attach it, and open
-// WhatsApp with the message — the link is included only in that fallback.
+// (most desktops), we just open WhatsApp with the message + an image link —
+// downloading the JPG is left to the explicit "Download" button, so a stray
+// click (or double-click) never silently saves a file.
 export async function shareInvoice(inv, shop) {
   let file = null
   try {
@@ -39,17 +40,7 @@ export async function shareInvoice(inv, shop) {
     }
   }
 
-  // Desktop fallback: download the image (so it can be attached) + open WhatsApp.
-  if (file) {
-    const url = URL.createObjectURL(file)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = file.name
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 2000)
-  }
+  // Desktop fallback: open WhatsApp with the message + image link (no download).
   window.open(`https://wa.me/?text=${encodeURIComponent(invoiceMessage(inv, shop, true))}`, '_blank')
   return 'fallback'
 }

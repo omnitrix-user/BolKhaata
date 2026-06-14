@@ -18,10 +18,26 @@ export function useSpeech({ lang = 'hi-IN', onResult, onError }) {
     try { recRef.current?.stop() } catch { /* noop */ }
   }, [])
 
-  const start = useCallback(() => {
+  // Fully release any previous recognition before a new one. Chrome allows only
+  // ONE live SpeechRecognition holding the mic per page; an orphaned instance
+  // keeps the audio device and makes the next start() fail instantly with
+  // "no audio". We detach its handlers (so its onend/onerror can't settle the
+  // NEW session) and abort it.
+  const teardown = () => {
+    const old = recRef.current
+    if (!old) return
+    old.onresult = null
+    old.onerror = null
+    old.onend = null
+    try { old.abort() } catch { /* noop */ }
+    recRef.current = null
+  }
+
+  const startWithLang = useCallback((useLang, isFallback = false) => {
     if (!SR) { onError?.('micUnsupported'); return }
+    teardown()
     const rec = new SR()
-    rec.lang = lang
+    rec.lang = useLang
     rec.interimResults = true
     rec.continuous = false
     rec.maxAlternatives = 1
@@ -57,9 +73,14 @@ export function useSpeech({ lang = 'hi-IN', onResult, onError }) {
       if (err === 'aborted' || abortingRef.current || gotResultRef.current) return
       if (err === 'not-allowed') settle(onError, 'micDenied')
       else if (err === 'no-speech') settle(onError, 'noAudio')
+      // Mac/Chrome: Google speech service temporarily unavailable for the chosen
+      // locale. Retry once with en-IN before giving up.
+      else if (err === 'language-not-supported' && !isFallback) {
+        startWithLang('en-IN', true)
+      }
       // Brave & some browsers disable the Google speech backend -> network /
       // service-not-allowed / audio-capture. Treat as "voice unavailable here".
-      else if (err === 'network' || err === 'service-not-allowed' || err === 'audio-capture') settle(onError, 'micUnsupported')
+      else if (err === 'network' || err === 'service-not-allowed' || err === 'audio-capture' || err === 'language-not-supported') settle(onError, 'micUnsupported')
       else settle(onError, 'notUnderstood')
     }
     rec.onend = () => {
@@ -68,7 +89,7 @@ export function useSpeech({ lang = 'hi-IN', onResult, onError }) {
       const text = finalRef.current.trim()
       if (text) settle(onResult, text)
       // Only complain when nothing was heard AND we didn't stop on purpose.
-      else if (!gotResultRef.current && !abortingRef.current) settle(onError, 'notUnderstood')
+      else if (!gotResultRef.current && !abortingRef.current) settle(onError, 'noAudio')
     }
 
     recRef.current = rec
@@ -77,13 +98,15 @@ export function useSpeech({ lang = 'hi-IN', onResult, onError }) {
       setRecording(true)
     } catch {
       setRecording(false)
-      settle(onError, 'notUnderstood')
+      settle(onError, 'noAudio')
     }
-  }, [lang, onResult, onError])
+  }, [lang, onResult, onError]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const start = useCallback(() => startWithLang(lang), [lang, startWithLang])
 
   useEffect(() => () => {
     abortingRef.current = true
-    try { recRef.current?.abort() } catch { /* noop */ }
+    teardown()
   }, [])
 
   return { supported: !!SR, recording, interim, start, stop }
