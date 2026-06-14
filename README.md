@@ -63,11 +63,11 @@ actually speak, and around the realities of their environment:
 | 🎙️ **Voice ledger** | Speak an entry → review → save. Credit/payment auto-detected from natural phrasing. |
 | ⌨️ **Type fallback** | Full manual entry everywhere — works with no mic or STT key. |
 | 🗣️ **Action voice commands** | *"Open Rahul's khata"*, *"Open the last invoice of Rahul"*, *"Naya khata kholo Rahul"* — commands **complete the task**, not just navigate. |
-| 📒 **Khata ledger** | Searchable customer list with red (owes) / green (advance) balances. |
+| 📒 **Khata ledger** | Searchable customer list with red (owes) / green (advance) balances; delete an account (and its transactions) with one tap. |
 | 👥 **Duplicate-safe customers** | Multiple customers can share a name; each is a distinct identity, disambiguated by phone. |
 | 👤 **Customer detail** | Full history, add credit/payment, settle-up, one-tap call, WhatsApp reminder. |
-| 🧾 **GST invoices** | Build by voice or form → ReportLab PDF + a shareable JPG with a UPI payment QR. |
-| 📲 **WhatsApp reminders** | Free `wa.me` deep links by default; optional Twilio auto-send. |
+| 🧾 **GST invoices** | Build by voice or form (with an optional phone field) → ReportLab PDF + a shareable JPG with a UPI payment QR; delete any invoice. |
+| 📲 **WhatsApp share** | Targeted `wa.me/<number>` chat with a pre-written, localized message when a phone is on file; native share sheet (image attached) otherwise. Optional Twilio auto-send. |
 | 📊 **Dashboard** | Total receivable, today's credit/payment, count of customers who owe. |
 | 🔐 **PIN auth** | Per-shop accounts with PBKDF2-hashed PINs; single-shop or multi-shop modes. |
 | 📱 **PWA** | Manifest, service worker, offline app shell, home-screen install. |
@@ -90,10 +90,11 @@ actually speak, and around the realities of their environment:
                                           └──────────────┬──────────────────────┘
         optional, graceful fallbacks                     │
    ┌──────────────┬───────────────┬─────────────┐        ▼
-   │ OpenRouter   │ OpenAI Whisper │  Twilio     │   ┌─────────────┐
-   │ (intent LLM) │ (server STT)   │  (WhatsApp) │   │   SQLite    │
-   └──────────────┴───────────────┴─────────────┘   │ bolkhaata.db│
-   each optional → on-device / heuristic fallback     └─────────────┘
+   │ Ollama +     │ OpenAI Whisper │  Twilio     │   ┌─────────────┐
+   │ OpenRouter   │ (server STT)   │  (WhatsApp) │   │   SQLite    │
+   │ (intent LLM) │                │             │   │ bolkhaata.db│
+   └──────────────┴───────────────┴─────────────┘   └─────────────┘
+   each optional → on-device Ollama / heuristic fallback
 ```
 
 **Design principles**
@@ -118,7 +119,7 @@ actually speak, and around the realities of their environment:
 | Database | **SQLite** | single local file, raw `sqlite3`, additive migrations on startup |
 | Auth | **PBKDF2-HMAC-SHA256** PIN + opaque `X-Shop-Token` | per-shop isolation |
 | Speech→text | **Web Speech API** (client) | optional server **OpenAI Whisper** |
-| Intent parsing | **OpenRouter LLM** (DeepSeek default) | offline regex + Hindi-number fallback |
+| Intent parsing | **Local Ollama** → **OpenRouter** → heuristic | on-device LLM first; offline regex + Hindi-number fallback always available |
 | Invoices | **ReportLab** (PDF) + **Pillow / qrcode** (JPG + UPI QR) | CGST/SGST split |
 | Reminders | **`wa.me`** deep links | optional **Twilio** WhatsApp |
 | i18n | hand-rolled `{hi, kn, en}` dictionary | language persisted in `localStorage` |
@@ -227,7 +228,7 @@ This is core to correctness, so it's explicit by design:
 Both suites are dependency-free and runnable directly:
 
 ```bash
-# Backend — customer resolution & khata rules (17 checks)
+# Backend — resolution, khata rules, invoice linking & offline parsing (40 checks)
 cd backend && python3 test_resolution.py
 
 # Frontend — voice command parsing (13 checks)
@@ -235,7 +236,8 @@ cd frontend && node src/lib/commands.test.mjs
 ```
 
 They cover the high-value scenarios: *Udayveer vs Udayveer Singh*, multiple *Rahul* entries,
-duplicate-khata creation, balance isolation, open-last-invoice, and command parsing.
+duplicate-khata creation, balance isolation, open-last-invoice, phone-based invoice
+disambiguation, offline invoice parsing (line-total vs per-unit math), and command parsing.
 
 ---
 
@@ -262,7 +264,7 @@ duplicate-khata creation, balance isolation, open-last-invoice, and command pars
 │       ├── api.js            # fetch client (token + error handling)
 │       ├── i18n.js           # hi / kn / en strings
 │       ├── components/       # VoiceAssistant, InvoicePreview, Icons, Toast
-│       ├── lib/              # commands, useSpeech, format, share
+│       ├── lib/              # commands, useSpeech, format, share, waMessage
 │       └── screens/          # Onboarding, Home, Ledger, CustomerDetail,
 │                             #   Invoices, InvoiceCreate, Settings
 ├── pwa/                       # standalone vanilla-JS prototype (separate app)
@@ -309,8 +311,10 @@ duplicate-khata creation, balance isolation, open-last-invoice, and command pars
 
 Tracked in [TODO.md](TODO.md). Highlights still open: timezone-correct "today" totals,
 multi-device sessions, editable transactions, customer merge/rename, and tightened
-file-token handling. Recently shipped: exact-match resolution, duplicate-name support,
-action voice commands, and per-shop PIN auth.
+file-token handling. Recently shipped: on-device **Ollama** intent parsing, offline
+invoice parsing, **delete** for khata accounts and invoices, phone-targeted WhatsApp
+sharing, exact-match resolution, duplicate-name support, action voice commands, and
+per-shop PIN auth.
 
 ---
 
