@@ -417,6 +417,24 @@ def delete_transaction(shop_id: int, txn_id: int) -> bool:
     return changed
 
 
+def delete_customer(shop_id: int, customer_id: int) -> bool:
+    """Delete a customer's khata account: the customer row and all their ledger
+    transactions. Invoices are kept (they carry a denormalised customer_name) but
+    unlinked so they no longer point at a deleted customer."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM customers WHERE id = ? AND shop_id = ?", (customer_id, shop_id))
+    changed = cur.rowcount > 0
+    if changed:
+        cur.execute("DELETE FROM transactions WHERE shop_id = ? AND customer_id = ?",
+                    (shop_id, customer_id))
+        cur.execute("UPDATE invoices SET customer_id = NULL WHERE shop_id = ? AND customer_id = ?",
+                    (shop_id, customer_id))
+    conn.commit()
+    conn.close()
+    return changed
+
+
 def summary(shop_id: int) -> dict:
     customers = list_customers(shop_id)
     receivable = round(sum(-c["balance"] for c in customers if c["balance"] < 0), 2)

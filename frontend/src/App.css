@@ -419,6 +419,23 @@
   color: var(--text);
 }
 .row--txn { cursor: default; }
+.row-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.row-wrap .row { flex: 1; min-width: 0; }
+.row-del {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--red);
+  font-size: 1.05rem;
+}
 .avatar {
   width: 42px;
   height: 42px;

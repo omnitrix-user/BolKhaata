@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { t } from '../i18n'
 import { balanceMeta, formatRupee, timeAgo } from '../lib/format'
-import { Search } from '../components/Icons'
+import { Search, Trash } from '../components/Icons'
+import { useToast } from '../components/Toast'
 
 export default function Ledger({ lang, nav }) {
   const tr = (k) => t(lang, k)
+  const toast = useToast()
   const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
@@ -16,6 +18,18 @@ export default function Ledger({ lang, nav }) {
       .catch(() => setCustomers([]))
       .finally(() => setLoading(false))
   }, [])
+
+  const del = async (c) => {
+    const msg = lang === 'hi' ? `क्या आप ${c.name} का खाता हटाना चाहते हैं? सभी लेन-देन हट जाएंगे।`
+      : lang === 'kn' ? `${c.name} ಅವರ ಖಾತೆ ಅಳಿಸಲು ಬಯಸುವಿರಾ? ಎಲ್ಲಾ ವಹಿವಾಟುಗಳು ಅಳಿಸಲಾಗುತ್ತದೆ.`
+        : `Delete ${c.name}'s account? All their transactions will be removed.`
+    if (!window.confirm(msg)) return
+    try {
+      await api.deleteCustomer(c.id)
+      setCustomers((list) => list.filter((x) => x.id !== c.id))
+      toast(lang === 'hi' ? 'खाता हटाया गया' : lang === 'kn' ? 'ಖಾತೆ ಅಳಿಸಲಾಗಿದೆ' : 'Account deleted')
+    } catch { toast(tr('somethingWrong'), 'error') }
+  }
 
   const filtered = useMemo(
     () => customers.filter((c) => c.name.toLowerCase().includes(q.toLowerCase())),
@@ -42,7 +56,7 @@ export default function Ledger({ lang, nav }) {
         {filtered.map((c) => {
           const m = balanceMeta(c.balance)
           return (
-            <li key={c.id}>
+            <li key={c.id} className="row-wrap">
               <button className="row" onClick={() => nav.openCustomer(c.id)}>
                 <span className="avatar" style={{ background: m.color }}>{c.name[0]?.toUpperCase()}</span>
                 <span className="row-main">
@@ -55,6 +69,9 @@ export default function Ledger({ lang, nav }) {
                     {m.state === 'due' ? tr('owes') : m.state === 'advance' ? tr('advance') : tr('settled')}
                   </small>
                 </span>
+              </button>
+              <button className="row-del" onClick={() => del(c)} aria-label={tr('deleteTxn')}>
+                <Trash />
               </button>
             </li>
           )

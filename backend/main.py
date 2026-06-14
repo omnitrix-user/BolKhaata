@@ -237,6 +237,13 @@ def delete_txn(txn_id: int, shop=Depends(auth.require_shop)):
     return {"success": True}
 
 
+@app.delete("/customer/{customer_id}")
+def delete_customer(customer_id: int, shop=Depends(auth.require_shop)):
+    if not database.delete_customer(shop["id"], customer_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"success": True}
+
+
 @app.get("/summary")
 def summary(shop=Depends(auth.require_shop)):
     return database.summary(shop["id"])

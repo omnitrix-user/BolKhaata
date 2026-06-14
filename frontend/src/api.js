@@ -100,6 +100,7 @@ export const api = {
   createCustomer: (name, phone = '') =>
     request('/customers', { method: 'POST', body: { name, phone } }),
   deleteTransaction: (id) => request(`/transaction/${id}`, { method: 'DELETE' }),
+  deleteCustomer: (id) => request(`/customer/${id}`, { method: 'DELETE' }),
   setPhone: (id, phone) =>
     request(`/customer/${id}/phone`, { method: 'POST', body: { phone } }),
   summary: () => request('/summary'),
