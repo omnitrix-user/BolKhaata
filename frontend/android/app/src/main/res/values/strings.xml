@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BolKhaata</string>
+    <string name="title_activity_main">BolKhaata</string>
+    <string name="package_name">com.apex.bolkhaata</string>
+    <string name="custom_url_scheme">com.apex.bolkhaata</string>
+</resources>
