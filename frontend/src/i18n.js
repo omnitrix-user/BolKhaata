@@ -63,6 +63,7 @@ export const STR = {
   whichCustomerHint: { hi: 'सही ग्राहक चुनें', kn: 'ಸರಿಯಾದ ಗ್ರಾಹಕರನ್ನು ಆರಿಸಿ', en: 'pick the right one' },
   newCustomer: { hi: '+ नया ग्राहक बनाएं', kn: '+ ಹೊಸ ಗ್ರಾಹಕ', en: '+ New customer' },
   noPhone: { hi: 'नंबर नहीं', kn: 'ಸಂಖ್ಯೆ ಇಲ್ಲ', en: 'no phone' },
+  noPhoneFound: { hi: 'इस ग्राहक का नंबर सेव नहीं है।', kn: 'ಈ ಗ್ರಾಹಕರ ಸಂಖ್ಯೆ ಉಳಿಸಿಲ್ಲ.', en: 'No phone number found for this contact.' },
   opened: { hi: 'खोल दिया', kn: 'ತೆರೆಯಲಾಗಿದೆ', en: 'Opened' },
   customerNotFound: { hi: 'खाता नहीं मिला', kn: 'ಖಾತೆ ಸಿಗಲಿಲ್ಲ', en: 'no khata found' },
   noInvoicesYet: { hi: 'कोई बिल नहीं है', kn: 'ಯಾವುದೇ ಬಿಲ್ ಇಲ್ಲ', en: 'no invoices yet' },

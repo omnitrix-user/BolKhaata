@@ -62,7 +62,7 @@ export default function Invoices({ lang, nav }) {
               <b className="num inv-total">{formatRupee(inv.total)}</b>
             </div>
             <div className="inv-actions">
-              <button className="pill pill--wa" onClick={() => shareInvoice(inv, auth.shop)}>
+              <button className="pill pill--wa" onClick={() => shareInvoice(inv, auth.shop, lang, { onNoPhone: () => toast(tr('noPhoneFound'), 'error') })}>
                 <WhatsApp /> {tr('shareWhatsApp')}
               </button>
               <button className="pill" onClick={() => setPreview(inv)} aria-label={tr('viewPdf')}>

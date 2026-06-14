@@ -1,30 +1,32 @@
 import { api } from '../api'
+import { invoiceMessage, waLink } from './waMessage'
 
-function invoiceMessage(inv, shop, withLink = false) {
-  const name = inv.customer_name || 'ji'
-  const lines = [
-    `🧾 ${shop?.name || 'BolKhaata'}`,
-    `Namaste ${name} 🙏`,
-    '',
-    'Aapka bill taiyaar hai:',
-  ]
-  ;(inv.items || []).slice(0, 8).forEach((it) => {
-    const qty = it.qty ? `${it.qty} x ` : ''
-    lines.push(`• ${it.name} — ${qty}₹${Number(it.rate || 0).toFixed(0)}`)
-  })
-  lines.push('', `💰 Total: ₹${Math.round(inv.total)}`)
-  if (shop?.upi_id) lines.push(`💳 UPI: ${shop.upi_id} (bill par QR scan karein)`)
-  lines.push('', 'Dhanyavaad! 🙏')
-  if (withLink) lines.push('', api.invoiceImageUrl(inv.invoice_id))
-  return lines.join('\n')
-}
+// Share an invoice on WhatsApp.
+//
+// If the invoice's customer has a stored phone number, open that contact's chat
+// directly (wa.me/<number>) with a localised, pre-written message — the same
+// proven pattern as the Khata reminder. (WhatsApp can't pre-attach media to a
+// targeted chat, so the invoice image goes in as a tappable link.)
+//
+// If no phone is stored, fall back to the native share sheet with the actual JPG
+// attached, and call onNoPhone() so the caller can show a toast.
+export async function shareInvoice(inv, shop, lang = 'en', { onNoPhone } = {}) {
+  const base = {
+    shopName: shop?.name || 'BolKhaata',
+    customerName: inv.customer_name,
+    total: inv.total,
+    items: inv.items,
+    upiId: shop?.upi_id || '',
+  }
+  const imageUrl = api.invoiceImageUrl(inv.invoice_id)
 
-// Share the invoice as an IMAGE. Web Share API attaches the real JPG (Android/
-// iOS, the actual target devices) with no link. Where files can't be shared
-// (most desktops), we just open WhatsApp with the message + an image link —
-// downloading the JPG is left to the explicit "Download" button, so a stray
-// click (or double-click) never silently saves a file.
-export async function shareInvoice(inv, shop) {
+  if (inv.phone) {
+    window.open(waLink(inv.phone, invoiceMessage(lang, { ...base, imageUrl })), '_blank')
+    return 'targeted'
+  }
+
+  // No phone on file -> generic share sheet with the real image attached.
+  onNoPhone?.()
   let file = null
   try {
     const blob = await api.invoiceImageBlob(inv.invoice_id)
@@ -33,15 +35,13 @@ export async function shareInvoice(inv, shop) {
 
   if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], text: invoiceMessage(inv, shop), title: 'Invoice' })
+      await navigator.share({ files: [file], text: invoiceMessage(lang, base), title: 'Invoice' })
       return 'image'
     } catch (e) {
       if (e?.name === 'AbortError') return 'cancelled'
     }
   }
-
-  // Desktop fallback: open WhatsApp with the message + image link (no download).
-  window.open(`https://wa.me/?text=${encodeURIComponent(invoiceMessage(inv, shop, true))}`, '_blank')
+  window.open(waLink('', invoiceMessage(lang, { ...base, imageUrl })), '_blank')
   return 'fallback'
 }
 

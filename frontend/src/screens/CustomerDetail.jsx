@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from '../api'
+import { api, auth } from '../api'
+import { reminderMessage, waLink } from '../lib/waMessage'
 import { t } from '../i18n'
 import { balanceMeta, formatRupee, timeAgo } from '../lib/format'
 import { Back, Phone, Plus, Trash, WhatsApp } from '../components/Icons'
@@ -40,11 +41,14 @@ export default function CustomerDetail({ lang, customerId, nav }) {
     } catch { toast(tr('somethingWrong'), 'error') }
   }
 
-  const remind = async () => {
-    try {
-      const res = await api.sendReminder({ customer_name: data.name, amount: data.balance, phone: data.phone })
-      window.open(res.wa_link, '_blank')
-    } catch { toast(tr('somethingWrong'), 'error') }
+  const remind = () => {
+    if (!data.phone) return toast(tr('noPhoneFound'), 'error')
+    const msg = reminderMessage(lang, {
+      shopName: auth.shop?.name || 'BolKhaata',
+      customerName: data.name,
+      amount: data.balance,
+    })
+    window.open(waLink(data.phone, msg), '_blank')
   }
 
   const addPhone = async () => {

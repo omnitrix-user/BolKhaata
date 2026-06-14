@@ -15,7 +15,7 @@ export default function InvoicePreview({ lang, inv, onClose }) {
   const onShare = async () => {
     if (sharing) return
     setSharing(true)
-    try { await shareInvoice(inv, auth.shop) } finally { setSharing(false) }
+    try { await shareInvoice(inv, auth.shop, lang, { onNoPhone: () => toast(tr('noPhoneFound'), 'error') }) } finally { setSharing(false) }
   }
 
   return (

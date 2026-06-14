@@ -465,20 +465,17 @@ def list_invoices(shop_id: int, customer_id: int = None):
     (used by the voice command 'open the last invoice of X')."""
     conn = get_connection()
     cur = conn.cursor()
+    # Join the linked customer so the UI has a phone number for WhatsApp sharing.
+    cols = ("SELECT i.invoice_id, i.customer_id, i.customer_name, i.items_json, i.total, "
+            "i.date, i.created_at, COALESCE(c.phone, '') AS phone "
+            "FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id ")
     if customer_id is None:
-        cur.execute(
-            "SELECT invoice_id, customer_id, customer_name, items_json, total, date, created_at "
-            "FROM invoices WHERE shop_id = ? ORDER BY id DESC",
-            (shop_id,),
-        )
+        cur.execute(cols + "WHERE i.shop_id = ? ORDER BY i.id DESC", (shop_id,))
     else:
-        cur.execute(
-            "SELECT invoice_id, customer_id, customer_name, items_json, total, date, created_at "
-            "FROM invoices WHERE shop_id = ? AND customer_id = ? ORDER BY id DESC",
-            (shop_id, customer_id),
-        )
+        cur.execute(cols + "WHERE i.shop_id = ? AND i.customer_id = ? ORDER BY i.id DESC",
+                    (shop_id, customer_id))
     out = [{"invoice_id": r["invoice_id"], "customer_id": r["customer_id"],
-            "customer_name": r["customer_name"],
+            "customer_name": r["customer_name"], "phone": r["phone"] or "",
             "items": json.loads(r["items_json"] or "[]"), "total": r["total"],
             "date": r["date"] or r["created_at"]} for r in cur.fetchall()]
     conn.close()
