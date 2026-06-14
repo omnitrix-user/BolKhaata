@@ -57,6 +57,30 @@ function extractName(raw, keys) {
   return keep.join(' ').trim() || null
 }
 
+// Explicit ACTION signal in a transaction transcript, language-agnostic.
+// Returns 'khata' | 'invoice' | 'ambiguous'. Used to skip the invoice-vs-khata
+// chooser when the user already said the destination ("add 500 to Rahul's khata"
+// / "generate bill for 2kg flour"). Only 'ambiguous' shows the chooser.
+const LEDGER_RE = new RegExp(
+  `(udhaar|udhar|udhari|hisaab|hisab|jama|baaki|baki|baqi|lena|dena|diy\\w*|liy\\w*|`
+  + `credit|payment|paid|owes?|borrow\\w*|add to|khat\\w*|`
+  + `उधार${DV}|हिसाब${DV}|जमा${DV}|बाकी${DV}|दिय${DV}|लिय${DV}|खात${DV}|`
+  + `ಖಾತೆ${KN}|ಸಾಲ${KN}|ಹಿಸಾಬ್${KN}|ಜಮಾ${KN})`,
+  'i',
+)
+const INVOICE_RE = new RegExp(`${G.invoice}|invoice|raseed|rasid|raseede`, 'i')
+
+export function detectAction(text, parsed) {
+  const t = (text || '').toLowerCase()
+  const invItems =
+    parsed?.type === 'invoice' && Array.isArray(parsed?.data?.items) && parsed.data.items.length > 0
+  const inv = INVOICE_RE.test(t) || invItems
+  const kh = LEDGER_RE.test(t)
+  if (inv && !kh) return 'invoice'
+  if (kh && !inv) return 'khata'
+  return 'ambiguous'
+}
+
 export function matchCommand(text) {
   const raw = (text || '').trim()
   if (!raw) return null

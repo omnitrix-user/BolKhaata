@@ -3,7 +3,7 @@ import { api } from '../api'
 import { t, SPEECH_LANG } from '../i18n'
 import { formatRupee } from '../lib/format'
 import { useSpeech } from '../lib/useSpeech'
-import { matchCommand } from '../lib/commands'
+import { matchCommand, detectAction } from '../lib/commands'
 import { Mic, Receipt, Book, X } from './Icons'
 import { useToast } from './Toast'
 
@@ -89,8 +89,6 @@ export default function VoiceAssistant({ lang, prefill, nav, onClose, onLogged }
     }
   }
 
-  const logKhataFor = (c) => logWith({ customer_id: c.id, customer_name: c.name })
-
   // "Open a new khata for X" — always a fresh ledger, even if X already exists.
   const createKhataAndOpen = async (name) => {
     const clean = (name || '').trim()
@@ -122,54 +120,63 @@ export default function VoiceAssistant({ lang, prefill, nav, onClose, onLogged }
     setPhase('busy')
     try {
       const res = await api.parseIntent(trimmed)
-      if (res.type === 'invoice' || res.type === 'khata') {
-        setParsed(res)
-        setPhase('action')
-      } else {
+      if (res.type !== 'invoice' && res.type !== 'khata') {
         toast(tr('notUnderstood'), 'error')
         setPhase('review')
+        return
       }
+      setParsed(res)
+      // If the spoken text explicitly names the destination, skip the chooser
+      // and go straight there. Only genuinely ambiguous input shows the prompt.
+      const decision = detectAction(trimmed, res)
+      if (decision === 'invoice') return chooseInvoice(res)
+      if (decision === 'khata') return chooseKhata(res)
+      setPhase('action')
     } catch {
       toast(tr('somethingWrong'), 'error')
       setPhase('review')
     }
   }
 
-  const chooseInvoice = () => {
-    const d = parsed.data || {}
+  const chooseInvoice = (p = parsed) => {
+    const d = p?.data || {}
     // Forward any parsed line-items (and a spoken phone) regardless of the
     // classified type, so spoken items aren't lost when the user picks Invoice.
     onClose()
     nav.openInvoiceCreate({ customer_name: d.customer_name || '', items: d.items || [], phone: d.phone || null })
   }
 
-  const chooseKhata = () => {
-    const d = parsed.type === 'khata' ? parsed.data : {}
-    setDraft({
+  const chooseKhata = (p = parsed) => {
+    const d = p?.type === 'khata' ? (p.data || {}) : {}
+    const draftObj = {
       customer_name: d.customer_name || '',
       amount: d.amount || '',
       txn: d.txn || 'credit',
       note: d.note || '',
       phone: d.phone || null,
-    })
-    setPhase('khata')
+    }
+    setDraft(draftObj)
+    // Complete khata command -> log directly (with disambiguation if needed).
+    // Incomplete (missing name/amount) -> fall back to the editable form.
+    if (draftObj.customer_name.trim() && Number(draftObj.amount) > 0) submitKhata(draftObj)
+    else setPhase('khata')
   }
 
-  const logWith = async ({ customer_id, customer_name }) => {
+  const logWith = async ({ customer_id, customer_name }, d = draft) => {
     setPhase('busy')
     try {
       const res = await api.logTransaction({
         customer_id,
         customer_name,
-        amount: Number(draft.amount),
-        type: draft.txn,
-        note: draft.note || '',
-        phone: draft.phone || null,
+        amount: Number(d.amount),
+        type: d.txn,
+        note: d.note || '',
+        phone: d.phone || null,
       })
-      const verb = draft.txn === 'credit'
+      const verb = d.txn === 'credit'
         ? (lang === 'en' ? 'credit logged' : lang === 'kn' ? 'ಸಾಲ ಸೇರಿಸಲಾಗಿದೆ' : 'उधार लिखा')
         : (lang === 'en' ? 'payment logged' : lang === 'kn' ? 'ಜಮಾ ಆಯಿತು' : 'जमा हुआ')
-      toast(`${res.customer_name} — ${formatRupee(Number(draft.amount))} ${verb}`)
+      toast(`${res.customer_name} — ${formatRupee(Number(d.amount))} ${verb}`)
       onLogged?.()
       onClose()
     } catch {
@@ -178,11 +185,11 @@ export default function VoiceAssistant({ lang, prefill, nav, onClose, onLogged }
     }
   }
 
-  const submitKhata = () => {
-    if (!draft.customer_name.trim()) return toast(tr('unknownCustomer'), 'error')
-    if (!draft.amount || Number(draft.amount) <= 0) return toast(tr('amount') + ' ' + tr('required'), 'error')
+  const submitKhata = (d = draft) => {
+    if (!d.customer_name.trim()) return toast(tr('unknownCustomer'), 'error')
+    if (!d.amount || Number(d.amount) <= 0) return toast(tr('amount') + ' ' + tr('required'), 'error')
     // Exact resolution: 1 -> log; many -> disambiguate; none -> create new khata.
-    resolveAndRun(draft.customer_name.trim(), logKhataFor, { createOnNone: true })
+    resolveAndRun(d.customer_name.trim(), (c) => logWith({ customer_id: c.id, customer_name: c.name }, d), { createOnNone: true })
   }
 
   // "New customer" on the disambiguation screen: force a brand-new duplicate
